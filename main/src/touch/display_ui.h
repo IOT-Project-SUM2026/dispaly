@@ -7,12 +7,13 @@
 #include "../home/home.h"
 #include "../weather/weather.h"
 #include "../settings/settings.h"
+#include "../time_date/time_date.h"
 
 int brightness = 200;
 
 // The open screen - only changed by handleTouch(). setup() shows HOME first.
-enum Screen { HOME, SETTINGS, WEATHER };
-const char* screenNames[] = {"Home", "Settings", "Weather"};
+enum Screen { HOME, SETTINGS, WEATHER, TIME };
+const char* screenNames[] = {"Home", "Settings", "Weather", "Time"};
 Screen currentScreen = HOME;
 int requestedScreen = -1;  // set by button callbacks, applied in handleTouch()
 
@@ -51,12 +52,14 @@ void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
 // ============================================================
 void onGear(lv_event_t* e) { requestedScreen = SETTINGS; }
 void onWeatherCard(lv_event_t* e) { requestedScreen = WEATHER; }
+void onClock(lv_event_t* e) { requestedScreen = TIME; }
 void onBack(lv_event_t* e) { requestedScreen = HOME; }
 
 // Build the screen and replace the current one
 void showScreen(Screen s) {
-  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard, NULL)
+  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard, onClock)
                 : (s == SETTINGS) ? buildSettingsScreen(onBack)
+                : (s == TIME)     ? buildTimeScreen(onBack)
                                   : buildWeatherScreen(onBack);
   lv_obj_t* old = lv_screen_active();
   lv_screen_load(scr);

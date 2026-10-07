@@ -126,6 +126,124 @@ void createHomeClock(lv_obj_t* parent, lv_event_cb_t onClick) {
 }
 
 // ============================================================
+// World clock screen
+// ============================================================
+struct WorldCity {
+  const char* name;
+  const char* tz;  // POSIX TZ rule, incl. daylight saving
+};
+
+#define WORLD_CITY_COUNT 6
+const WorldCity worldCities[WORLD_CITY_COUNT] = {
+  {"London",      "GMT0BST,M3.5.0/1,M10.5.0"},
+  {"Paris",       "CET-1CEST,M3.5.0,M10.5.0/3"},
+  {"New York",    "EST5EDT,M3.2.0,M11.1.0"},
+  {"Los Angeles", "PST8PDT,M3.2.0,M11.1.0"},
+  {"Tokyo",       "JST-9"},
+  {"Sydney",      "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+};
+
+// Local time in another zone: switch TZ, convert, switch back
+void timeIn(const char* tz, time_t now, struct tm* out) {
+  setenv("TZ", tz, 1);
+  tzset();
+  localtime_r(&now, out);
+  setenv("TZ", LOCAL_TZ, 1);
+  tzset();
+}
+
+// "Today" / "Tomorrow" / "Yesterday" compared to Israel
+const char* dayDifference(const struct tm& city, const struct tm& local) {
+  int diff = (city.tm_year - local.tm_year) * 400 + (city.tm_yday - local.tm_yday);
+  if (diff > 0) return "Tomorrow";
+  if (diff < 0) return "Yesterday";
+  return "Today";
+}
+
+lv_obj_t* worldCard = NULL;  // owns the labels below (same pattern as the home clock)
+lv_obj_t* worldLocalTimeLabel = NULL;
+lv_obj_t* worldLocalDateLabel = NULL;
+lv_obj_t* worldTimeLabels[WORLD_CITY_COUNT];
+lv_obj_t* worldDayLabels[WORLD_CITY_COUNT];
+
+void updateWorldClock() {
+  if (worldCard == NULL) return;
+
+  if (!timeSynced()) {
+    setLabelIfChanged(worldLocalTimeLabel, "--:--");
+    setLabelIfChanged(worldLocalDateLabel, "Jerusalem - waiting for time sync");
+    for (int i = 0; i < WORLD_CITY_COUNT; i++) {
+      setLabelIfChanged(worldTimeLabels[i], "--:--");
+      setLabelIfChanged(worldDayLabels[i], "");
+    }
+    return;
+  }
+
+  time_t now = time(NULL);
+  struct tm local;
+  localtime_r(&now, &local);
+
+  char timeBuf[8], ampmBuf[4], text[32];
+  formatClock(local, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
+  snprintf(text, sizeof(text), "%s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
+  setLabelIfChanged(worldLocalTimeLabel, text);
+  char dateBuf[20];
+  formatDate(local, dateBuf, sizeof(dateBuf));
+  snprintf(text, sizeof(text), "Jerusalem - %s", dateBuf);
+  setLabelIfChanged(worldLocalDateLabel, text);
+
+  for (int i = 0; i < WORLD_CITY_COUNT; i++) {
+    struct tm city;
+    timeIn(worldCities[i].tz, now, &city);
+    formatClock(city, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
+    snprintf(text, sizeof(text), "%s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
+    setLabelIfChanged(worldTimeLabels[i], text);
+    setLabelIfChanged(worldDayLabels[i], dayDifference(city, local));
+  }
+}
+
+void onWorldClockDeleted(lv_event_t* e) {
+  if (lv_event_get_target(e) != worldCard) return;
+  worldCard = worldLocalTimeLabel = worldLocalDateLabel = NULL;
+}
+
+lv_obj_t* buildTimeScreen(lv_event_cb_t onBack) {
+  lv_obj_t* scr = createScreen();
+
+  createWiFiIcon(scr);
+  createBackButton(scr, onBack);
+
+  // header: title + Jerusalem date on the left, Jerusalem time on the right
+  lv_obj_t* title = createLabel(scr, "World Clock", &lv_font_montserrat_20, UI_TEXT);
+  lv_obj_set_pos(title, 60, 42);
+  worldLocalDateLabel = createLabel(scr, "", &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_set_pos(worldLocalDateLabel, 60, 66);
+  worldLocalTimeLabel = createLabel(scr, "", &lv_font_montserrat_28, UI_ACCENT);
+  lv_obj_align(worldLocalTimeLabel, LV_ALIGN_TOP_RIGHT, -14, 42);
+
+  // one card with a row per city: name | day | time
+  worldCard = createCard(scr, 12, 90, 296, 146, 10, NULL);
+  lv_obj_add_event_cb(worldCard, onWorldClockDeleted, LV_EVENT_DELETE, NULL);
+
+  for (int i = 0; i < WORLD_CITY_COUNT; i++) {
+    int y = 4 + i * 23;
+    if (i > 0) createShape(worldCard, 10, y - 2, 274, 1, 0, UI_TRACK);  // row separator
+
+    lv_obj_t* name = createLabel(worldCard, worldCities[i].name, &lv_font_montserrat_14, UI_TEXT);
+    lv_obj_set_pos(name, 12, y + 2);
+
+    worldDayLabels[i] = createLabel(worldCard, "", &lv_font_montserrat_12, UI_SECONDARY);
+    lv_obj_set_pos(worldDayLabels[i], 120, y + 4);
+
+    worldTimeLabels[i] = createLabel(worldCard, "", &lv_font_montserrat_14, UI_ACCENT);
+    lv_obj_align(worldTimeLabels[i], LV_ALIGN_TOP_RIGHT, -12, y + 2);
+  }
+
+  updateWorldClock();
+  return scr;
+}
+
+// ============================================================
 // Starts NTP once WiFi is up, logs the first sync,
 // and refreshes the clock labels once per second
 // ============================================================
@@ -151,5 +269,6 @@ void handleTimeDate() {
   }
 
   updateHomeClock();
+  updateWorldClock();
 }
 #endif
