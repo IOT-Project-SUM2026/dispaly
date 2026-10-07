@@ -98,5 +98,12 @@ void handleBrightnessTouch(int16_t x, int16_t y, int &brightnessRef) {
   applyBrightness(brightnessRef);
   drawBrightnessSlider(brightnessRef);
   drawBrightnessValue(brightnessRef);
+
+  // log at most every 300 ms so a drag doesn't flood the serial monitor
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog > 300) {
+    lastLog = millis();
+    Serial.printf("[Settings] Brightness %d%%\n", (int)map(brightnessRef, 0, 255, 0, 100));
+  }
 }
 #endif

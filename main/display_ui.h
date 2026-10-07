@@ -84,11 +84,13 @@ void handleTouch() {
 
     if (currentScreen == HOME) {
       if (gearTouched(x, y)) {
+        Serial.println("[UI] Home -> Settings");
         drawSettingsScreen(brightness);
         delay(200);
         return;
       }
       if (homeWeatherCardTouched(x, y)) {
+        Serial.println("[UI] Home -> Weather");
         drawWeatherScreen();
         delay(200);
         return;
@@ -96,6 +98,7 @@ void handleTouch() {
     }
     else if (currentScreen == SETTINGS) {
       if (backButtonTouched(x, y)) {
+        Serial.println("[UI] Settings -> Home");
         drawHomeScreen();
         delay(200);
         return;
@@ -104,6 +107,7 @@ void handleTouch() {
     }
     else if (currentScreen == WEATHER) {
       if (backButtonTouched(x, y)) {
+        Serial.println("[UI] Weather -> Home");
         drawHomeScreen();
         delay(200);
         return;

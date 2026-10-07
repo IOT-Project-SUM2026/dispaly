@@ -51,7 +51,10 @@ int dayOfWeek(int y, int m, int d) {
 const char* weekdayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 void fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Weather] Skipped - no WiFi");
+    return;
+  }
 
   HTTPClient http;
   String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(WEATHER_LAT) +
@@ -91,12 +94,12 @@ void fetchWeather() {
         forecast[i].day = (i == 0) ? "TODAY" : String(weekdayNames[wd]);
       }
       weatherLoaded = true;
-      Serial.println("Weather + forecast updated");
+      Serial.println("[Weather] Updated");
     } else {
-      Serial.println("Weather JSON parse failed");
+      Serial.println("[Weather] JSON parse failed");
     }
   } else {
-    Serial.print("Weather HTTP error: ");
+    Serial.print("[Weather] HTTP error: ");
     Serial.println(httpCode);
   }
   http.end();
@@ -274,10 +277,13 @@ void drawWeatherScreen() {
   tft.setTextDatum(TL_DATUM);
 }
 
+// Waits for WiFi; retries every 30 s until the first success, then every 10 min
 void checkWeather() {
   static unsigned long lastFetch = 0;
+  if (WiFi.status() != WL_CONNECTED) return;
   unsigned long now = millis();
-  if (lastFetch == 0 || now - lastFetch > 600000) {
+  unsigned long interval = weatherLoaded ? 600000 : 30000;
+  if (lastFetch == 0 || now - lastFetch > interval) {
     lastFetch = now;
     fetchWeather();
     if (currentScreen == HOME) drawHomeScreen();

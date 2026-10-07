@@ -8,16 +8,25 @@
 
 WiFiManager wifiManager;
 
+// Non-blocking: if WiFi isn't available, the setup portal runs in the
+// background (see handleWiFi) and the display keeps working offline.
 void connectWiFi() {
-  bool connected = wifiManager.autoConnect("SmartDisplay-Setup");
+  wifiManager.setConfigPortalBlocking(false);
+  wifiManager.setConnectTimeout(10);
+  wifiManager.setAPCallback([](WiFiManager*) {
+    Serial.println("[WiFi] Not connected - setup portal \"SmartDisplay-Setup\" is open");
+  });
 
-  if (!connected) {
-    Serial.println("Failed to connect and hit timeout");
-    ESP.restart();
+  if (wifiManager.autoConnect("SmartDisplay-Setup")) {
+    Serial.print("[WiFi] Connected, IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("[WiFi] Continuing offline");
   }
+}
 
-  Serial.println("WiFi connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+// Called from loop() - keeps the background setup portal running
+void handleWiFi() {
+  wifiManager.process();
 }
 #endif

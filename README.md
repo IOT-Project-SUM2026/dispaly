@@ -64,15 +64,15 @@ Later builds only recompile your changes and are much faster.
 
 ## First boot: WiFi
 
-On first boot, before connecting to WiFi, the screen shows **static noise**. That is expected.
+The display starts right away and works offline. Until WiFi is set up it shows the offline WiFi icon and runs a setup portal in the background:
 
 1. On your phone, join the WiFi network **`SmartDisplay-Setup`**.
 2. A setup page opens (otherwise browse to `192.168.4.1`) → *Configure WiFi* →
    pick your network and enter the password.
-3. The board connects, fetches the weather and shows the home screen. It remembers
+3. The board connects (the WiFi icon updates within ~2 s) and the weather appears. It remembers
    the network, so later boots skip this step.
 
-Logs: Tools → Serial Monitor at **115200** baud.
+Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Documentation/errors_and_states.md) for the log messages.
 
 ## Project files
 
@@ -84,8 +84,8 @@ Logs: Tools → Serial Monitor at **115200** baud.
 | `main/shared_ui.h` | WiFi icon, gear icon, back button |
 | `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, forecast screen |
 | `main/src/settings/settings.h` | settings screen, brightness slider + backlight PWM |
-| `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`) |
-| `main/src/wifi/connection_status.h` | older WiFi status icon, currently not included (replaced by `shared_ui.h`) |
+| `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
+| `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
 
@@ -103,7 +103,6 @@ the configuration travels with the repo. Changing `build_opt.h` triggers a full 
 | `TFT_eSPI.h: No such file or directory` | Libraries not installed (setup step 3). |
 | `'FS' was not declared in this scope` | `#include <FS.h>` must stay above `#include <TFT_eSPI.h>` in `globals.h`. |
 | Screen stays **white** | Screen not configured: `build_opt.h` wasn't used. Make sure you opened `main/main.ino` from this repo. |
-| Screen shows **static noise** | Waiting for WiFi setup, see *First boot*. |
 | Colors wrong / image mirrored | Your board may use an ST7789 screen (common on 2-USB-port CYDs): in `build_opt.h` replace `-DILI9341_2_DRIVER=1` with `-DST7789_DRIVER=1`. |
 | No COM port | Install the CH340 driver; try another USB cable (some are charge-only). |
 
