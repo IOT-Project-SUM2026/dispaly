@@ -1,7 +1,7 @@
 #ifndef WEATHER_H
 #define WEATHER_H
-#include "globals.h"
-#include "shared_ui.h"
+#include "../../globals.h"
+#include "../../shared_ui.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 

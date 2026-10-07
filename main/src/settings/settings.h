@@ -1,7 +1,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
-#include "globals.h"
-#include "shared_ui.h"
+#include "../../globals.h"
+#include "../../shared_ui.h"
 
 #define BACKLIGHT_PIN 21
 #define PWM_FREQ 5000

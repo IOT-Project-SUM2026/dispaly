@@ -4,8 +4,8 @@
 #include <XPT2046_Touchscreen.h>
 #include "globals.h"
 #include "shared_ui.h"
-#include "weather.h"
-#include "settings.h"
+#include "src/weather/weather.h"
+#include "src/settings/settings.h"
 
 TFT_eSPI tft = TFT_eSPI();
 Screen currentScreen = HOME;

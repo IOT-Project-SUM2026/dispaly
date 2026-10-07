@@ -1,6 +1,6 @@
 #ifndef CONNECTION_STATUS_H
 #define CONNECTION_STATUS_H
-#include "globals.h"
+#include "../../globals.h"
 #include <WiFi.h>
 
 #define WIFI_ICON_X 20
