@@ -4,6 +4,7 @@
 #include "src/wifi/connection_status.h"
 #include "src/settings/settings.h"
 #include "src/weather/weather.h"
+#include "src/time_date/time_date.h"
 #include "src/home/home.h"
 #include "src/touch/display_ui.h"
 
@@ -17,6 +18,7 @@ void setup() {
 void loop() {
   handleWiFi();
   handleConnectionStatus();
+  handleTimeDate();
   handleTouch();
   if (handleWeather()) refreshScreen();
 }

@@ -55,7 +55,7 @@ void onBack(lv_event_t* e) { requestedScreen = HOME; }
 
 // Build the screen and replace the current one
 void showScreen(Screen s) {
-  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard)
+  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard, NULL)
                 : (s == SETTINGS) ? buildSettingsScreen(onBack)
                                   : buildWeatherScreen(onBack);
   lv_obj_t* old = lv_screen_active();
