@@ -1,7 +1,7 @@
 # dispaly
 
 ESP32 touchscreen firmware for the Smart Display: home screen, weather + forecast,
-settings (brightness), WiFi status.
+settings (brightness), WiFi status. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
 
 ## Overview
 
@@ -16,12 +16,12 @@ phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
 dispaly/
 ├── Documentation/            install instructions, pinout, states & errors
 └── main/                     Arduino sketch (open main/main.ino)
-    ├── main.ino, *.h         general code: setup/loop, globals, shared UI drawing
-    ├── build_opt.h           screen configuration
+    ├── main.ino, *.h         general code: setup/loop, globals, shared LVGL widgets
+    ├── build_opt.h           screen + LVGL configuration
     ├── sketch.yaml           pinned versions for Arduino CLI
     └── src/                  one folder per feature
         ├── home/             home screen
-        ├── touch/            display + touch init, touch zones, screen switching
+        ├── touch/            LVGL + display + touch init, screen switching
         ├── weather/          weather fetch + weather screen
         ├── settings/         settings screen + brightness
         └── wifi/             WiFi setup portal, connection status
@@ -46,6 +46,7 @@ dispaly/
    | Library | Author | Version |
    |---|---|---|
    | TFT_eSPI | Bodmer | 2.5.43 |
+   | lvgl | kisvegabor | 9.6.0 |
    | XPT2046_Touchscreen | Paul Stoffregen | 1.4.0 |
    | WiFiManager | tzapu | 2.0.17 |
    | ArduinoJson | Benoit Blanchon | 7.4.3 |
@@ -57,11 +58,12 @@ dispaly/
 
 1. Open **`main/main.ino`** (always open it from `main/`, see Troubleshooting).
 2. Tools → Board → esp32 → **ESP32 Dev Module**.
-3. Tools → Port → the board's COM port.
-4. Click **Upload**. If it hangs on `Connecting...`, hold the **BOOT** button on the
+3. Tools → Partition Scheme → **Huge APP (3MB No OTA/1MB SPIFFS)**. The firmware doesn't fit the default 1.3 MB app partition with LVGL.
+4. Tools → Port → the board's COM port.
+5. Click **Upload**. If it hangs on `Connecting...`, hold the **BOOT** button on the
    board until the upload starts.
 
-The first build takes several minutes because the whole ESP32 core is compiled.
+The first build takes several minutes because the whole ESP32 core and LVGL are compiled.
 Later builds only recompile your changes and are much faster.
 
 ## First boot: WiFi
@@ -81,16 +83,19 @@ Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Do
 | File | Purpose |
 |---|---|
 | `main/main.ino` | `setup()` / `loop()` |
-| `main/globals.h` | screen size, colors, UI positions |
-| `main/shared_ui.h` | WiFi icon, gear icon, back button drawing |
-| `main/src/home/home.h` | home screen |
-| `main/src/touch/display_ui.h` | display + touch init, all touch zones, current screen, `handleTouch()` / `refreshScreen()` |
-| `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, forecast screen |
-| `main/src/settings/settings.h` | settings screen, brightness slider + backlight PWM |
+| `main/globals.h` | screen size, colors (`lv_color_hex`), UI positions |
+| `main/shared_ui.h` | shared LVGL widgets: screen, label, card, shapes/sun icon, WiFi icon, back + gear buttons |
+| `main/src/home/home.h` | `buildHomeScreen()` |
+| `main/src/touch/display_ui.h` | LVGL init (display via `lv_tft_espi`, touch input), current screen, button callbacks, `handleTouch()` (runs `lv_timer_handler()`) / `refreshScreen()` |
+| `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, `buildWeatherScreen()` |
+| `main/src/settings/settings.h` | `buildSettingsScreen()`, brightness `lv_slider` + backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
-| `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins), passed to the compiler automatically |
+| `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins) and **LVGL configuration** (fonts, TFT_eSPI driver), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
+
+Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) and rebuilt every time it opens.
+Buttons only request a screen change; `handleTouch()` performs it.
 
 Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
 `handleTouch`, `handleWeather`). Only `handleTouch()` changes the open screen.
@@ -99,17 +104,19 @@ Feature folders must stay under `main/src/`: Arduino only compiles the sketch fo
 its `src/` subfolder. Files in `src/` don't open as tabs in Arduino IDE. Open them with
 File → Open, or open the repo folder in VS Code.
 
-Do **not** edit the TFT_eSPI library's `User_Setup.h`: `build_opt.h` replaces it, so
-the configuration travels with the repo. Changing `build_opt.h` triggers a full rebuild.
+Do **not** edit the TFT_eSPI library's `User_Setup.h` and do **not** add an `lv_conf.h`:
+`build_opt.h` replaces both (`LV_CONF_SKIP`), so the configuration travels with the repo. After changing `build_opt.h`, do a clean build (see Troubleshooting).
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| `TFT_eSPI.h: No such file or directory` | Libraries not installed (setup step 3). |
+| `TFT_eSPI.h` / `lvgl.h`: No such file or directory | Libraries not installed (setup step 3). |
+| `Sketch too big` / `text section exceeds available space` | Tools → Partition Scheme → **Huge APP** (Build and upload, step 3). |
 | `'FS' was not declared in this scope` | `#include <FS.h>` must stay above `#include <TFT_eSPI.h>` in `globals.h`. |
 | Screen stays **white** | Screen not configured: `build_opt.h` wasn't used. Make sure you opened `main/main.ino` from this repo. |
 | Colors wrong / image mirrored | Your board may use an ST7789 screen (common on 2-USB-port CYDs): in `build_opt.h` replace `-DILI9341_2_DRIVER=1` with `-DST7789_DRIVER=1`. |
+| A `build_opt.h` change has no effect / old errors come back | Arduino reuses cached library builds. Close the IDE, delete `%LOCALAPPDATA%\arduino\sketches`, and build again (CLI: `arduino-cli compile --clean`). |
 | No COM port | Install the CH340 driver; try another USB cable (some are charge-only). |
 
 ## Arduino CLI (optional)

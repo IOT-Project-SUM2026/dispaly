@@ -105,72 +105,50 @@ bool fetchWeather() {
 }
 
 // ============================================================
-// Weather icon drawing (shared shape logic, different sizes)
+// Weather icon (sun / cloud / rain) built from simple shapes
 // ============================================================
-void drawWeatherIconShape(int cx, int cy, uint8_t type, uint16_t color, int scale) {
-  if (type == 0) { // sun
-    tft.drawCircle(cx, cy, 7 * scale / 10, color);
-    for (int i = 0; i < 8; i++) {
-      float a = i * 45.0f * DEG_TO_RAD;
-      int x1 = cx + round(cos(a) * 11 * scale / 10);
-      int y1 = cy + round(sin(a) * 11 * scale / 10);
-      int x2 = cx + round(cos(a) * 14 * scale / 10);
-      int y2 = cy + round(sin(a) * 14 * scale / 10);
-      tft.drawLine(x1, y1, x2, y2, color);
+lv_obj_t* createWeatherIcon(lv_obj_t* parent, uint8_t type, int s, lv_color_t color) {
+  if (type == 0) return createSunIcon(parent, s, color);
+
+  lv_obj_t* box = createShape(parent, 0, 0, s, s, 0, color);
+  lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+  int top = (type == 2) ? 0 : s / 8;               // rain: cloud higher, drops below
+  createShape(box, s / 8, top + s / 4, s / 2, s / 2, LV_RADIUS_CIRCLE, color);
+  createShape(box, s * 7 / 20, top + s / 10, s * 3 / 5, s * 3 / 5, LV_RADIUS_CIRCLE, color);
+  createShape(box, 0, top + s * 9 / 20, s, s * 3 / 10, s * 3 / 20, color);
+  if (type == 2) {
+    for (int i = 1; i <= 3; i++) {
+      createShape(box, s * i / 4 - s / 24, s * 4 / 5, s / 12 + 1, s / 5, 2, color);
     }
-  } else if (type == 1) { // cloud
-    tft.drawCircle(cx - 5, cy + 1, 6 * scale / 10, color);
-    tft.drawCircle(cx + 3, cy - 2, 8 * scale / 10, color);
-    tft.drawCircle(cx + 10, cy + 2, 5 * scale / 10, color);
-    tft.drawRoundRect(cx - 10, cy + 1, 25 * scale / 10, 9 * scale / 10, 4, color);
-  } else { // rain
-    tft.drawCircle(cx - 4, cy - 2, 6 * scale / 10, color);
-    tft.drawCircle(cx + 4, cy - 4, 7 * scale / 10, color);
-    tft.drawRoundRect(cx - 10, cy - 2, 23 * scale / 10, 8 * scale / 10, 4, color);
-    tft.drawLine(cx - 5, cy + 9, cx - 8, cy + 14, color);
-    tft.drawLine(cx + 3, cy + 9, cx, cy + 14, color);
   }
+  return box;
 }
 
 // ============================================================
 // Home weather card (tap to open the full Weather page)
 // ============================================================
-void drawHomeWeatherCard() {
-  int x = WEATHER_CARD_X, y = WEATHER_CARD_Y, w = WEATHER_CARD_W, h = WEATHER_CARD_H;
-
-  tft.fillRoundRect(x, y, w, h, 10, UI_SURFACE);
-  tft.drawRoundRect(x, y, w, h, 10, UI_TRACK);
+void createHomeWeatherCard(lv_obj_t* parent, lv_event_cb_t onClick) {
+  lv_obj_t* card = createCard(parent, WEATHER_CARD_X, WEATHER_CARD_Y, WEATHER_CARD_W, WEATHER_CARD_H, 10, onClick);
 
   if (!weatherLoaded) {
-    tft.setTextFont(2);
-    tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-    tft.setTextDatum(ML_DATUM);
-    tft.drawString("Loading weather...", x + 16, y + h / 2);
-    tft.setTextDatum(TL_DATUM);
+    lv_obj_t* loading = createLabel(card, "Loading weather...", &lv_font_montserrat_14, UI_SECONDARY);
+    lv_obj_align(loading, LV_ALIGN_LEFT_MID, 16, 0);
     return;
   }
 
-  drawWeatherIconShape(x + 24, y + 25, currentIcon, UI_ACCENT, 10);
+  lv_obj_t* icon = createWeatherIcon(card, currentIcon, 28, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
 
-  char temp[8];
-  snprintf(temp, sizeof(temp), "%d\xB0", currentTemp);
-  tft.setTextFont(4);
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(temp, x + 48, y + 25);
+  lv_obj_t* temp = createLabel(card, (String(currentTemp) + "°").c_str(), &lv_font_montserrat_28, UI_TEXT);
+  lv_obj_align(temp, LV_ALIGN_LEFT_MID, 48, 0);
 
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(currentCondition, x + 92, y + 17);
+  lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+  lv_obj_align(condition, LV_ALIGN_LEFT_MID, 110, -9);
+  lv_obj_t* place = createLabel(card, location.c_str(), &lv_font_montserrat_14, UI_TEXT);
+  lv_obj_align(place, LV_ALIGN_LEFT_MID, 110, 9);
 
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(location, x + 92, y + 34);
-
-  tft.setTextFont(4);
-  tft.setTextColor(UI_ACCENT, UI_SURFACE);
-  tft.drawString(">", x + w - 17, y + 25);
-
-  tft.setTextDatum(TL_DATUM);
+  lv_obj_t* arrow = createLabel(card, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, UI_ACCENT);
+  lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -12, 0);
 }
 
 // ============================================================
@@ -179,95 +157,63 @@ void drawHomeWeatherCard() {
 #define FORECAST_GAP 8
 #define FORECAST_CARD_W 64  // (280 total width - 3 gaps of 8) / 4 cards
 
-void drawForecastCard(const ForecastDay& d, int x) {
-  int y = 174, w = FORECAST_CARD_W, h = 55;
-  tft.fillRoundRect(x, y, w, h, 6, UI_SURFACE);
+void createForecastCard(lv_obj_t* parent, const ForecastDay& d, int x) {
+  lv_obj_t* card = createCard(parent, x, 174, FORECAST_CARD_W, 55, 6, NULL);
+  lv_obj_set_style_border_width(card, 0, 0);
 
-  tft.setTextFont(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(d.day, x + w / 2, y + 6);
+  lv_obj_t* day = createLabel(card, d.day.c_str(), &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(day, LV_ALIGN_TOP_MID, 0, 3);
 
-  drawWeatherIconShape(x + w / 2, y + 26, d.icon, UI_ACCENT, 10);
+  lv_obj_t* icon = createWeatherIcon(card, d.icon, 16, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 19);
 
-  char high[8], low[8];
-  snprintf(high, sizeof(high), "%d\xB0", d.high);
-  snprintf(low, sizeof(low), "%d\xB0", d.low);
-
-  // centered within each half of the card, so text can't spill past the edges
-  tft.setTextFont(2);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(high, x + (int)(w * 0.28), y + 44);
-
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(low, x + (int)(w * 0.72), y + 44);
-
-  tft.setTextDatum(TL_DATUM);
+  lv_obj_t* high = createLabel(card, (String(d.high) + "°").c_str(), &lv_font_montserrat_12, UI_TEXT);
+  lv_obj_align(high, LV_ALIGN_BOTTOM_MID, -14, -3);
+  lv_obj_t* low = createLabel(card, (String(d.low) + "°").c_str(), &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(low, LV_ALIGN_BOTTOM_MID, 14, -3);
 }
 
 // ============================================================
 // Full Weather + Forecast screen
 // ============================================================
-void drawWeatherScreen() {
-  tft.fillScreen(UI_BG);
+lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
+  lv_obj_t* scr = createScreen();
 
-  drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
-  drawBackButton();
+  createWiFiIcon(scr);
+  createBackButton(scr, onBack);
 
   // header: title left, location right, same row
-  tft.setTextFont(4);
-  tft.setTextColor(UI_TEXT, UI_BG);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString("Weather", 20, 80);
+  lv_obj_t* title = createLabel(scr, "Weather", &lv_font_montserrat_28, UI_TEXT);
+  lv_obj_set_pos(title, 20, 76);
+  lv_obj_t* place = createLabel(scr, location.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+  lv_obj_align(place, LV_ALIGN_TOP_RIGHT, -22, 88);
 
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_BG);
-  tft.setTextDatum(TR_DATUM);
-  tft.drawString(location, 298, 90);
-
-  tft.drawFastHLine(20, 108, 280, UI_TRACK);
+  createShape(scr, 20, 108, 280, 1, 0, UI_TRACK);
 
   if (!weatherLoaded) {
-    tft.setTextFont(2);
-    tft.setTextColor(UI_SECONDARY, UI_BG);
-    tft.setTextDatum(TL_DATUM);
-    tft.drawString("Loading...", 20, 130);
-    return;
+    lv_obj_t* loading = createLabel(scr, "Loading...", &lv_font_montserrat_14, UI_SECONDARY);
+    lv_obj_set_pos(loading, 20, 130);
+    return scr;
   }
 
   // compact current-weather card: icon, temp, condition, single row
-  int cardX = 20, cardY = 115, cardW = 280, cardH = 40;
-  tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, UI_SURFACE);
+  lv_obj_t* card = createCard(scr, 20, 115, 280, 40, 8, NULL);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_t* icon = createWeatherIcon(card, currentIcon, 24, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
+  lv_obj_t* temp = createLabel(card, (String(currentTemp) + "°").c_str(), &lv_font_montserrat_20, UI_TEXT);
+  lv_obj_align(temp, LV_ALIGN_LEFT_MID, 50, 0);
+  lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+  lv_obj_align(condition, LV_ALIGN_LEFT_MID, 110, 0);
 
-  drawWeatherIconShape(cardX + 24, cardY + cardH / 2, currentIcon, UI_ACCENT, 10);
+  // forecast label + row
+  lv_obj_t* label = createLabel(scr, "4-DAY FORECAST", &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 158);
 
-  char temp[8];
-  snprintf(temp, sizeof(temp), "%d\xB0", currentTemp);
-  tft.setTextFont(4);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.setTextDatum(ML_DATUM);
-  tft.drawString(temp, cardX + 50, cardY + cardH / 2);
-
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(currentCondition, cardX + 110, cardY + cardH / 2);
-
-  // forecast label
-  tft.setTextFont(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(UI_SECONDARY, UI_BG);
-  tft.drawString("4-DAY FORECAST", 160, 163);
-
-  int xs[FORECAST_DAYS];
   for (int i = 0; i < FORECAST_DAYS; i++) {
-    xs[i] = 20 + i * (FORECAST_CARD_W + FORECAST_GAP);
+    createForecastCard(scr, forecast[i], 20 + i * (FORECAST_CARD_W + FORECAST_GAP));
   }
-  for (int i = 0; i < FORECAST_DAYS; i++) {
-    drawForecastCard(forecast[i], xs[i]);
-  }
-
-  tft.setTextDatum(TL_DATUM);
+  return scr;
 }
 
 // Fetches every 30 s until the first success, then every 10 min.

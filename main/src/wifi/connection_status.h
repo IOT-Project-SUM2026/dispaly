@@ -1,11 +1,12 @@
 #ifndef CONNECTION_STATUS_H
 #define CONNECTION_STATUS_H
 #include "../../globals.h"
+#include "../../shared_ui.h"
 #include <WiFi.h>
 
 // ============================================================
 // Polls the WiFi state every 2 s and updates the icon on the
-// current screen when it changes (screens also redraw it on open).
+// current screen when it changes (screens also set it on open).
 // ============================================================
 bool lastConnectionState = false;
 
@@ -25,7 +26,6 @@ void handleConnectionStatus() {
     Serial.println("[WiFi] Disconnected");
   }
 
-  tft.fillRect(WIFI_ICON_X - 14, WIFI_ICON_Y - 14, 28, 26, UI_BG);
-  drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, connected);
+  updateWiFiIcon(connected);
 }
 #endif
