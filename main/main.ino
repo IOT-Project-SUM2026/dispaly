@@ -6,6 +6,7 @@
 #include "src/weather/weather.h"
 #include "src/home/home.h"
 #include "src/touch/display_ui.h"
+#include "src/firebase/firebase_sync.h"
 
 void setup() {
   Serial.begin(115200);
@@ -13,6 +14,7 @@ void setup() {
   initDisplay();
   drawHomeScreen();
   connectWiFi();
+  startFirebase();
 }
 
 void loop() {
@@ -20,4 +22,5 @@ void loop() {
   handleConnectionStatus();
   handleTouch();
   if (handleWeather()) refreshScreen();
+  if (handleFirebase()) refreshScreen();
 }
