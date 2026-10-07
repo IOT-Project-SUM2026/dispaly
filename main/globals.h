@@ -1,5 +1,6 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
+#include <FS.h>  // must come before TFT_eSPI, which hides the global FS that WebServer (WiFiManager) needs
 #include <TFT_eSPI.h>
 
 // ============================================================
