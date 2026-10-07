@@ -66,13 +66,17 @@ const char* weekdayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 // Returns true when new data was loaded
 bool fetchWeather() {
+  Serial.println("[Weather] Fetching weather...");
+  unsigned long start = millis();
   bool updated = false;
   HTTPClient http;
   const WeatherCity& city = weatherCities[selectedCity];
-  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
+  // plain HTTP: skips the slow TLS handshake (public weather data, nothing private sent)
+  String url = "http://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
                "&longitude=" + String(city.lon) +
                "&current_weather=true"
                "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+               "&forecast_days=" + String(FORECAST_DAYS) +
                "&timezone=auto";
 
   http.begin(url);
@@ -107,13 +111,12 @@ bool fetchWeather() {
       }
       weatherLoaded = true;
       updated = true;
-      Serial.printf("[Weather] Updated (%s)\n", city.name);
+      Serial.printf("[Weather] Updated (%s) in %lu ms\n", city.name, millis() - start);
     } else {
       Serial.println("[Weather] JSON parse failed");
     }
   } else {
-    Serial.print("[Weather] HTTP error: ");
-    Serial.println(httpCode);
+    Serial.printf("[Weather] HTTP error: %d (after %lu ms)\n", httpCode, millis() - start);
   }
   http.end();
   return updated;
