@@ -11,12 +11,13 @@ Board: ESP32-2432S028R ("Cheap Yellow Display", CYD)
 
 3. Install the libraries (Tools -> Manage Libraries), exact versions:
    - TFT_eSPI             by Bodmer            2.5.43
+   - lvgl                 by kisvegabor        9.6.0
    - XPT2046_Touchscreen  by Paul Stoffregen   1.4.0
    - WiFiManager          by tzapu             2.0.17
    - ArduinoJson          by Benoit Blanchon   7.4.3
 
-   Do NOT edit TFT_eSPI's User_Setup.h - the screen is configured by
-   main/build_opt.h in this repo.
+   Do NOT edit TFT_eSPI's User_Setup.h and do NOT add an lv_conf.h -
+   the screen and LVGL are configured by main/build_opt.h in this repo.
 
 4. Connect the board with a USB data cable.
    If no new COM port appears under Tools -> Port, install the CH340 USB driver
@@ -26,6 +27,7 @@ Board: ESP32-2432S028R ("Cheap Yellow Display", CYD)
 
 6. Select:
    Tools -> Board -> esp32 -> ESP32 Dev Module
+   Tools -> Partition Scheme -> Huge APP (3MB No OTA/1MB SPIFFS)
    Tools -> Port  -> the board's COM port
 
 7. Click Upload.

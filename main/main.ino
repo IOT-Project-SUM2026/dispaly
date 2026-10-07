@@ -10,8 +10,7 @@
 void setup() {
   Serial.begin(115200);
   Serial.println("[Boot] Smart Display starting");
-  initDisplay();
-  drawHomeScreen();
+  initDisplay();  // shows the home screen
   connectWiFi();
 }
 
