@@ -14,6 +14,7 @@ phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
 
 ```
 dispaly/
+├── upload.bat                one-click build + upload (Windows)
 ├── Documentation/            install instructions, pinout, states & errors
 └── main/                     Arduino sketch (open main/main.ino)
     ├── main.ino, *.h         general code: setup/loop, globals, shared LVGL widgets
@@ -35,6 +36,20 @@ dispaly/
 
 **ESP32-2432S028R** ("Cheap Yellow Display", CYD): ESP32 + 2.8" 320×240 ILI9341 screen
 + XPT2046 resistive touch, one micro-USB port.
+
+## Quick start (Windows): `upload.bat`
+
+1. Install **Arduino IDE 2** from arduino.cc (the script uses the `arduino-cli` inside it).
+2. Plug in the board (install the **CH340** USB driver if no COM port shows up).
+3. Double-click **`upload.bat`**, type the board's COM port when asked.
+
+The script downloads the exact ESP32 board package and library versions from
+`main/sketch.yaml` on first run, builds with the right partition scheme, uploads, and
+can open the serial monitor. Nothing to install or configure by hand. Close Arduino IDE's
+Serial Monitor first, since it holds the COM port. Run `upload.bat clean` for a full
+rebuild after changing `build_opt.h`.
+
+Prefer Arduino IDE? Follow the two sections below instead.
 
 ## One-time setup (per computer)
 

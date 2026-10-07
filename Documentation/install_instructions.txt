@@ -3,6 +3,17 @@ Smart Display - ESP32 firmware - install instructions
 
 Board: ESP32-2432S028R ("Cheap Yellow Display", CYD)
 
+QUICK WAY (Windows)
+-------------------
+1. Install Arduino IDE 2 (https://www.arduino.cc/en/software).
+2. Connect the board (install the CH340 USB driver if no COM port appears).
+3. Double-click upload.bat in the repo root and enter the COM port.
+   It downloads the exact board package + libraries, builds and uploads.
+   Then continue with step 8 below (first boot - WiFi setup).
+
+MANUAL WAY (Arduino IDE)
+------------------------
+
 1. Install Arduino IDE 2 (https://www.arduino.cc/en/software).
 
 2. Install the ESP32 board package:
