@@ -48,10 +48,4 @@ void drawBackButton() {
   tft.drawLine(wingX + 1, BACK_CY - 7, tipX + 1, BACK_CY, UI_TEXT);
   tft.drawLine(tipX + 1, BACK_CY, wingX + 1, BACK_CY + 7, UI_TEXT);
 }
-
-// Shared touch-zone check for the back button, used by Settings + Weather
-bool backButtonTouched(int16_t x, int16_t y) {
-  return (x >= 0 && x <= BACK_CX + BACK_R + 15 &&
-          y >= BACK_CY - BACK_R - 15 && y <= BACK_CY + BACK_R + 15);
-}
 #endif

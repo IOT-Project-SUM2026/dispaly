@@ -33,7 +33,8 @@ Board: ESP32-2432S028R ("Cheap Yellow Display", CYD)
    - If it hangs on "Connecting...", hold the BOOT button on the board.
 
 8. First boot - WiFi setup:
-   - The screen shows static noise while waiting for WiFi. This is expected.
+   - The display starts right away and works offline (offline WiFi icon);
+     the setup portal runs in the background until WiFi is configured.
    - On your phone, join the WiFi network "SmartDisplay-Setup".
    - In the page that opens (or http://192.168.4.1) choose "Configure WiFi",
      pick your network and enter the password.

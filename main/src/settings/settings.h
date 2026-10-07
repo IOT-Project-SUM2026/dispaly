@@ -69,7 +69,6 @@ void drawBrightnessValue(int value) {
 
 void drawSettingsScreen(int brightnessValue) {
   tft.fillScreen(UI_BG);
-  currentScreen = SETTINGS;
 
   drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
   drawBackButton();
@@ -89,14 +88,17 @@ int brightnessFromTouchX(int16_t x) {
   return map(x, SLIDER_MIN_X, SLIDER_MAX_X, 0, 255);
 }
 
-void handleBrightnessTouch(int16_t x, int16_t y, int &brightnessRef) {
-  if (x < SLIDER_MIN_X - 10 || x > SLIDER_MAX_X + 10 ||
-      y < SLIDER_Y - 25 || y > SLIDER_Y + 25) {
-    return;
-  }
+void setBrightnessFromTouch(int16_t x, int &brightnessRef) {
   brightnessRef = brightnessFromTouchX(x);
   applyBrightness(brightnessRef);
   drawBrightnessSlider(brightnessRef);
   drawBrightnessValue(brightnessRef);
+
+  // log at most every 300 ms so a drag doesn't flood the serial monitor
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog > 300) {
+    lastLog = millis();
+    Serial.printf("[Settings] Brightness %d%%\n", (int)map(brightnessRef, 0, 255, 0, 100));
+  }
 }
 #endif
