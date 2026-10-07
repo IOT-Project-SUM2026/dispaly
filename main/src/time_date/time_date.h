@@ -44,7 +44,12 @@ lv_obj_t* clockAmPmLabel = NULL;
 lv_obj_t* clockDateLabel = NULL;
 
 void setLabelIfChanged(lv_obj_t* label, const char* text) {
-  if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+  bool changed = false;
+  if (strcmp(lv_label_get_text(label), text) != 0) {
+    lv_label_set_text(label, text);
+    changed = true;
+  }
+  return changed;
 }
 
 void updateHomeClock() {
@@ -54,6 +59,7 @@ void updateHomeClock() {
     setLabelIfChanged(clockTimeLabel, "--:--");
     setLabelIfChanged(clockDateLabel, "Waiting for time sync");
     lv_obj_add_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
+    Serial.printf("[Time] waiting for sync\n");
     return;
   }
 
@@ -65,9 +71,13 @@ void updateHomeClock() {
   formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
   formatDate(t, dateBuf, sizeof(dateBuf));
 
-  setLabelIfChanged(clockTimeLabel, timeBuf);
-  setLabelIfChanged(clockDateLabel, dateBuf);
-  setLabelIfChanged(clockAmPmLabel, ampmBuf);
+  c1 = setLabelIfChanged(clockTimeLabel, timeBuf);
+  c2 = setLabelIfChanged(clockDateLabel, dateBuf);
+  c3 = setLabelIfChanged(clockAmPmLabel, ampmBuf);
+  if (c1 || c2 || c3) {
+    Serial.printf("[Time] updated: %s %s %s\n", timeBuf, ampmBuf, dateBuf);
+  }
+  
   if (use24h) lv_obj_add_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_remove_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
 }
