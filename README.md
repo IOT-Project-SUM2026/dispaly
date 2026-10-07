@@ -16,10 +16,12 @@ phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
 dispaly/
 ├── Documentation/            install instructions, pinout, states & errors
 └── main/                     Arduino sketch (open main/main.ino)
-    ├── main.ino, *.h         general code: setup/loop, globals, display & touch, shared UI
+    ├── main.ino, *.h         general code: setup/loop, globals, shared UI drawing
     ├── build_opt.h           screen configuration
     ├── sketch.yaml           pinned versions for Arduino CLI
     └── src/                  one folder per feature
+        ├── home/             home screen
+        ├── touch/            display + touch init, touch zones, screen switching
         ├── weather/          weather fetch + weather screen
         ├── settings/         settings screen + brightness
         └── wifi/             WiFi setup portal, connection status
@@ -79,15 +81,19 @@ Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Do
 | File | Purpose |
 |---|---|
 | `main/main.ino` | `setup()` / `loop()` |
-| `main/globals.h` | screen size, colors, UI positions, screen enum |
-| `main/display_ui.h` | display + touch init, home screen, touch dispatch |
-| `main/shared_ui.h` | WiFi icon, gear icon, back button |
+| `main/globals.h` | screen size, colors, UI positions |
+| `main/shared_ui.h` | WiFi icon, gear icon, back button drawing |
+| `main/src/home/home.h` | home screen |
+| `main/src/touch/display_ui.h` | display + touch init, all touch zones, current screen, `handleTouch()` / `refreshScreen()` |
 | `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, forecast screen |
 | `main/src/settings/settings.h` | settings screen, brightness slider + backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
+
+Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
+`handleTouch`, `handleWeather`). Only `handleTouch()` changes the open screen.
 
 Feature folders must stay under `main/src/`: Arduino only compiles the sketch folder and
 its `src/` subfolder. Files in `src/` don't open as tabs in Arduino IDE. Open them with

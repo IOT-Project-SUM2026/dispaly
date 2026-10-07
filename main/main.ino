@@ -4,7 +4,8 @@
 #include "src/wifi/connection_status.h"
 #include "src/settings/settings.h"
 #include "src/weather/weather.h"
-#include "display_ui.h"
+#include "src/home/home.h"
+#include "src/touch/display_ui.h"
 
 void setup() {
   Serial.begin(115200);
@@ -16,7 +17,7 @@ void setup() {
 
 void loop() {
   handleWiFi();
-  checkConnectionStatus();
+  handleConnectionStatus();
   handleTouch();
-  checkWeather();
+  if (handleWeather()) refreshScreen();
 }

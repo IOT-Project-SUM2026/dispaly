@@ -2,14 +2,18 @@
 #define DISPLAY_UI_H
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
-#include "globals.h"
-#include "shared_ui.h"
-#include "src/weather/weather.h"
-#include "src/settings/settings.h"
+#include "../../globals.h"
+#include "../../shared_ui.h"
+#include "../home/home.h"
+#include "../weather/weather.h"
+#include "../settings/settings.h"
 
 TFT_eSPI tft = TFT_eSPI();
-Screen currentScreen = HOME;
 int brightness = 200;
+
+// The open screen - only changed by handleTouch(). setup() draws HOME first.
+enum Screen { HOME, SETTINGS, WEATHER };
+Screen currentScreen = HOME;
 
 #define XPT2046_IRQ 36
 #define XPT2046_MOSI 32
@@ -21,41 +25,26 @@ SPIClass touchscreenSPI = SPIClass(VSPI);
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 
 // ============================================================
-// Home screen
-// ============================================================
-void drawHomeScreen() {
-  tft.fillScreen(UI_BG);
-  currentScreen = HOME;
-
-  drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
-  drawGearIcon();
-
-  const char* smart = "Smart";
-  const char* disp = " Display";
-
-  tft.setTextFont(4);
-  int smartW = tft.textWidth(smart);
-  int dispW = tft.textWidth(disp);
-  int startX = 160 - (smartW + dispW) / 2;
-
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(UI_TEXT, UI_BG);
-  tft.drawString(smart, startX, 112);
-  tft.setTextColor(UI_ACCENT, UI_BG);
-  tft.drawString(disp, startX + smartW, 112);
-
-  tft.fillRoundRect(151, 133, 58, 4, 2, UI_ACCENT);
-
-  drawHomeWeatherCard();
-
-  tft.setTextDatum(TL_DATUM);
-}
-
-// ============================================================
-// Home screen touch zones
+// Touch zones
 // ============================================================
 bool gearTouched(int16_t x, int16_t y) {
   return (x >= 270 && x <= 319 && y >= 0 && y <= 50);
+}
+
+bool homeWeatherCardTouched(int16_t x, int16_t y) {
+  return (x >= WEATHER_CARD_X - 10 && x <= WEATHER_CARD_X + WEATHER_CARD_W + 10 &&
+          y >= WEATHER_CARD_Y - 10 && y <= WEATHER_CARD_Y + WEATHER_CARD_H + 10);
+}
+
+// Shared by Settings + Weather
+bool backButtonTouched(int16_t x, int16_t y) {
+  return (x >= 0 && x <= BACK_CX + BACK_R + 15 &&
+          y >= BACK_CY - BACK_R - 15 && y <= BACK_CY + BACK_R + 15);
+}
+
+bool sliderTouched(int16_t x, int16_t y) {
+  return (x >= SLIDER_MIN_X - 10 && x <= SLIDER_MAX_X + 10 &&
+          y >= SLIDER_Y - 25 && y <= SLIDER_Y + 25);
 }
 
 // ============================================================
@@ -74,6 +63,14 @@ void initDisplay() {
 }
 
 // ============================================================
+// Redraw the open screen (e.g. after new weather data)
+// ============================================================
+void refreshScreen() {
+  if (currentScreen == HOME) drawHomeScreen();
+  if (currentScreen == WEATHER) drawWeatherScreen();
+}
+
+// ============================================================
 // Touch dispatch, per screen
 // ============================================================
 void handleTouch() {
@@ -85,12 +82,14 @@ void handleTouch() {
     if (currentScreen == HOME) {
       if (gearTouched(x, y)) {
         Serial.println("[UI] Home -> Settings");
+        currentScreen = SETTINGS;
         drawSettingsScreen(brightness);
         delay(200);
         return;
       }
       if (homeWeatherCardTouched(x, y)) {
         Serial.println("[UI] Home -> Weather");
+        currentScreen = WEATHER;
         drawWeatherScreen();
         delay(200);
         return;
@@ -99,15 +98,19 @@ void handleTouch() {
     else if (currentScreen == SETTINGS) {
       if (backButtonTouched(x, y)) {
         Serial.println("[UI] Settings -> Home");
+        currentScreen = HOME;
         drawHomeScreen();
         delay(200);
         return;
       }
-      handleBrightnessTouch(x, y, brightness);
+      if (sliderTouched(x, y)) {
+        setBrightnessFromTouch(x, brightness);
+      }
     }
     else if (currentScreen == WEATHER) {
       if (backButtonTouched(x, y)) {
         Serial.println("[UI] Weather -> Home");
+        currentScreen = HOME;
         drawHomeScreen();
         delay(200);
         return;

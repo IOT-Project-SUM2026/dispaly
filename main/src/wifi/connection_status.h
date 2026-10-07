@@ -9,7 +9,7 @@
 // ============================================================
 bool lastConnectionState = false;
 
-void checkConnectionStatus() {
+void handleConnectionStatus() {
   static unsigned long lastCheck = 0;
   if (millis() - lastCheck < 2000) return;
   lastCheck = millis();

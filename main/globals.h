@@ -59,16 +59,10 @@
 #define SLIDER_MIN_X   56
 #define SLIDER_MAX_X   288
 
-// ============================================================
-// Screen state
-// ============================================================
-enum Screen { HOME, SETTINGS, WEATHER };
-
 extern TFT_eSPI tft;
-extern Screen currentScreen;
 extern int brightness;
 
-// Forward declarations (implemented in display_ui.h / settings.h / weather.h)
+// Forward declarations (implemented in home.h / settings.h / weather.h / shared_ui.h)
 void drawHomeScreen();
 void drawSettingsScreen(int brightness);
 void drawWeatherScreen();

@@ -50,12 +50,9 @@ int dayOfWeek(int y, int m, int d) {
 
 const char* weekdayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
-void fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Weather] Skipped - no WiFi");
-    return;
-  }
-
+// Returns true when new data was loaded
+bool fetchWeather() {
+  bool updated = false;
   HTTPClient http;
   String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(WEATHER_LAT) +
                "&longitude=" + String(WEATHER_LON) +
@@ -94,6 +91,7 @@ void fetchWeather() {
         forecast[i].day = (i == 0) ? "TODAY" : String(weekdayNames[wd]);
       }
       weatherLoaded = true;
+      updated = true;
       Serial.println("[Weather] Updated");
     } else {
       Serial.println("[Weather] JSON parse failed");
@@ -103,6 +101,7 @@ void fetchWeather() {
     Serial.println(httpCode);
   }
   http.end();
+  return updated;
 }
 
 // ============================================================
@@ -174,11 +173,6 @@ void drawHomeWeatherCard() {
   tft.setTextDatum(TL_DATUM);
 }
 
-bool homeWeatherCardTouched(int16_t x, int16_t y) {
-  return (x >= WEATHER_CARD_X - 10 && x <= WEATHER_CARD_X + WEATHER_CARD_W + 10 &&
-          y >= WEATHER_CARD_Y - 10 && y <= WEATHER_CARD_Y + WEATHER_CARD_H + 10);
-}
-
 // ============================================================
 // Forecast day card (compact, part of the forecast row)
 // ============================================================
@@ -217,7 +211,6 @@ void drawForecastCard(const ForecastDay& d, int x) {
 // ============================================================
 void drawWeatherScreen() {
   tft.fillScreen(UI_BG);
-  currentScreen = WEATHER;
 
   drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
   drawBackButton();
@@ -277,17 +270,20 @@ void drawWeatherScreen() {
   tft.setTextDatum(TL_DATUM);
 }
 
-// Waits for WiFi; retries every 30 s until the first success, then every 10 min
-void checkWeather() {
-  static unsigned long lastFetch = 0;
-  if (WiFi.status() != WL_CONNECTED) return;
-  unsigned long now = millis();
+// Fetches every 30 s until the first success, then every 10 min.
+// Returns true when new data arrived (the caller redraws the screen).
+bool handleWeather() {
+  static unsigned long lastAttempt = 0;
+  static bool firstAttempt = true;
   unsigned long interval = weatherLoaded ? 600000 : 30000;
-  if (lastFetch == 0 || now - lastFetch > interval) {
-    lastFetch = now;
-    fetchWeather();
-    if (currentScreen == HOME) drawHomeScreen();
-    if (currentScreen == WEATHER) drawWeatherScreen();
+  if (!firstAttempt && millis() - lastAttempt < interval) return false;
+  firstAttempt = false;
+  lastAttempt = millis();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Weather] Skipped - no WiFi");
+    return false;
   }
+  return fetchWeather();
 }
 #endif

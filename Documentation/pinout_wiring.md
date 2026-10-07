@@ -28,7 +28,7 @@ Configured in [`main/build_opt.h`](../main/build_opt.h). Brightness PWM is in
 | CLK | 25 |
 | CS | 33 |
 
-Configured in [`main/display_ui.h`](../main/display_ui.h).
+Configured in [`main/src/touch/display_ui.h`](../main/src/touch/display_ui.h).
 
 The screen and touch controller use separate SPI buses, which is why `build_opt.h` sets
 `USE_HSPI_PORT` for the screen.
