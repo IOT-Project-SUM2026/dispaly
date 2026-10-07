@@ -32,8 +32,10 @@ void handleWiFi() {
   wifiManager.process();
 
   static unsigned long offlineSince = 0;
+  static unsigned long lastRetry = 0;
   if (WiFi.status() == WL_CONNECTED) {
     offlineSince = 0;
+    lastRetry = millis();  // first retry 15 s after a drop, so the ESP32's auto-reconnect goes first
     if (wifiManager.getConfigPortalActive()) {
       Serial.println("[WiFi] Connected - closing setup portal");
       wifiManager.stopConfigPortal();
@@ -50,7 +52,6 @@ void handleWiFi() {
 
   // retries make the portal unresponsive for a moment, so retry less often while it's open
   unsigned long retryInterval = wifiManager.getConfigPortalActive() ? 60000 : 15000;
-  static unsigned long lastRetry = 0;
   if (millis() - lastRetry < retryInterval) return;
   lastRetry = millis();
 
