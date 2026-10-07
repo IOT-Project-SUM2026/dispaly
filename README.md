@@ -3,6 +3,32 @@
 ESP32 touchscreen firmware for the Smart Display: home screen, weather + forecast,
 settings (brightness), WiFi status.
 
+## Overview
+
+Part of **Smart Display** (IoT project course 236333, Technion, group 5) by
+Shada Nujeidat, Yuval Carmelli and Liat Rokach. A smart display that shows personal
+information (weather, time, calendar, lists) and receives voice commands sent from a
+phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
+
+## Folder description
+
+```
+dispaly/
+├── Documentation/            install instructions, pinout, states & errors
+└── main/                     Arduino sketch (open main/main.ino)
+    ├── main.ino, *.h         general code: setup/loop, globals, display & touch, shared UI
+    ├── build_opt.h           screen configuration
+    ├── sketch.yaml           pinned versions for Arduino CLI
+    └── src/                  one folder per feature
+        ├── weather/          weather fetch + weather screen
+        ├── settings/         settings screen + brightness
+        └── wifi/             WiFi setup portal, connection status
+```
+
+- [Documentation/install_instructions.txt](Documentation/install_instructions.txt): step-by-step setup
+- [Documentation/pinout_wiring.md](Documentation/pinout_wiring.md): CYD pins and further reading
+- [Documentation/errors_and_states.md](Documentation/errors_and_states.md): what the display shows in each state
+
 ## Hardware
 
 **ESP32-2432S028R** ("Cheap Yellow Display", CYD): ESP32 + 2.8" 320×240 ILI9341 screen
@@ -53,9 +79,19 @@ Logs: Tools → Serial Monitor at **115200** baud.
 | File | Purpose |
 |---|---|
 | `main/main.ino` | `setup()` / `loop()` |
-| `main/*.h` | screens and logic (UI, weather, settings, WiFi) |
+| `main/globals.h` | screen size, colors, UI positions, screen enum |
+| `main/display_ui.h` | display + touch init, home screen, touch dispatch |
+| `main/shared_ui.h` | WiFi icon, gear icon, back button |
+| `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, forecast screen |
+| `main/src/settings/settings.h` | settings screen, brightness slider + backlight PWM |
+| `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`) |
+| `main/src/wifi/connection_status.h` | older WiFi status icon, currently not included (replaced by `shared_ui.h`) |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
+
+Feature folders must stay under `main/src/`: Arduino only compiles the sketch folder and
+its `src/` subfolder. Files in `src/` don't open as tabs in Arduino IDE. Open them with
+File → Open, or open the repo folder in VS Code.
 
 Do **not** edit the TFT_eSPI library's `User_Setup.h`: `build_opt.h` replaces it, so
 the configuration travels with the repo. Changing `build_opt.h` triggers a full rebuild.

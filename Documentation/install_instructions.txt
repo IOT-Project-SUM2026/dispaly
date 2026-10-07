@@ -1,0 +1,45 @@
+Smart Display - ESP32 firmware - install instructions
+=====================================================
+
+Board: ESP32-2432S028R ("Cheap Yellow Display", CYD)
+
+1. Install Arduino IDE 2 (https://www.arduino.cc/en/software).
+
+2. Install the ESP32 board package:
+   Tools -> Board -> Boards Manager -> search "esp32"
+   -> install "esp32 by Espressif Systems", version 3.3.12
+
+3. Install the libraries (Tools -> Manage Libraries), exact versions:
+   - TFT_eSPI             by Bodmer            2.5.43
+   - XPT2046_Touchscreen  by Paul Stoffregen   1.4.0
+   - WiFiManager          by tzapu             2.0.17
+   - ArduinoJson          by Benoit Blanchon   7.4.3
+
+   Do NOT edit TFT_eSPI's User_Setup.h - the screen is configured by
+   main/build_opt.h in this repo.
+
+4. Connect the board with a USB data cable.
+   If no new COM port appears under Tools -> Port, install the CH340 USB driver
+   and reconnect.
+
+5. Open main/main.ino (from the main/ folder of this repo).
+
+6. Select:
+   Tools -> Board -> esp32 -> ESP32 Dev Module
+   Tools -> Port  -> the board's COM port
+
+7. Click Upload.
+   - The first build takes several minutes; later builds are faster.
+   - If it hangs on "Connecting...", hold the BOOT button on the board.
+
+8. First boot - WiFi setup:
+   - The screen shows static noise while waiting for WiFi. This is expected.
+   - On your phone, join the WiFi network "SmartDisplay-Setup".
+   - In the page that opens (or http://192.168.4.1) choose "Configure WiFi",
+     pick your network and enter the password.
+   - The board connects and shows the home screen. It remembers the network.
+
+9. Logs: Tools -> Serial Monitor, 115200 baud.
+
+Problems? See Documentation/errors_and_states.md and the Troubleshooting
+section of README.md.
