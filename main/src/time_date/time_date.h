@@ -39,11 +39,12 @@ void formatDate(const struct tm& t, char* buf, size_t len) {
 // ============================================================
 // Home clock card - labels are updated in place by handleTimeDate()
 // ============================================================
+lv_obj_t* clockCard = NULL;       // the card that owns the labels below
 lv_obj_t* clockTimeLabel = NULL;
 lv_obj_t* clockAmPmLabel = NULL;
 lv_obj_t* clockDateLabel = NULL;
 
-void setLabelIfChanged(lv_obj_t* label, const char* text) {
+bool setLabelIfChanged(lv_obj_t* label, const char* text) {
   bool changed = false;
   if (strcmp(lv_label_get_text(label), text) != 0) {
     lv_label_set_text(label, text);
@@ -53,7 +54,10 @@ void setLabelIfChanged(lv_obj_t* label, const char* text) {
 }
 
 void updateHomeClock() {
-  if (clockTimeLabel == NULL) return;
+  if (clockTimeLabel == NULL){
+    Serial.println("[Time] clock labels are NULL, skipping update");
+    return;
+  }
 
   if (!timeSynced()) {
     setLabelIfChanged(clockTimeLabel, "--:--");
@@ -71,6 +75,7 @@ void updateHomeClock() {
   formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
   formatDate(t, dateBuf, sizeof(dateBuf));
 
+  bool c1, c2, c3;
   c1 = setLabelIfChanged(clockTimeLabel, timeBuf);
   c2 = setLabelIfChanged(clockDateLabel, dateBuf);
   c3 = setLabelIfChanged(clockAmPmLabel, ampmBuf);
@@ -82,8 +87,11 @@ void updateHomeClock() {
   else lv_obj_remove_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
 }
 
+// The new Home screen is built before the old one is deleted, so only
+// clear the labels if the deleted card is the one that owns them
 void onHomeClockDeleted(lv_event_t* e) {
-  clockTimeLabel = clockAmPmLabel = clockDateLabel = NULL;
+  if (lv_event_get_target(e) != clockCard) return;
+  clockCard = clockTimeLabel = clockAmPmLabel = clockDateLabel = NULL;
 }
 
 void createHomeClock(lv_obj_t* parent, lv_event_cb_t onClick) {
@@ -91,6 +99,7 @@ void createHomeClock(lv_obj_t* parent, lv_event_cb_t onClick) {
   lv_obj_set_style_bg_grad_color(card, UI_BG, 0);           // soft top-to-bottom fade
   lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, 0);
   lv_obj_add_event_cb(card, onHomeClockDeleted, LV_EVENT_DELETE, NULL);
+  clockCard = card;
 
   // time + AM/PM on one baseline
   lv_obj_t* row = lv_obj_create(card);
