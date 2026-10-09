@@ -7,12 +7,14 @@
 #include "../home/home.h"
 #include "../weather/weather.h"
 #include "../settings/settings.h"
+#include "../time_date/time_date.h"
+#include "../idle/idle.h"
 
 int brightness = 200;
 
 // The open screen - only changed by handleTouch(). setup() shows HOME first.
-enum Screen { HOME, SETTINGS, WEATHER };
-const char* screenNames[] = {"Home", "Settings", "Weather"};
+enum Screen { HOME, SETTINGS, WEATHER, TIME };
+const char* screenNames[] = {"Home", "Settings", "Weather", "Time"};
 Screen currentScreen = HOME;
 int requestedScreen = -1;  // set by button callbacks, applied in handleTouch()
 
@@ -33,7 +35,12 @@ uint32_t drawBuf[DRAW_BUF_SIZE / 4];
 // Touch input - LVGL calls this to read the touchscreen
 // ============================================================
 void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
-  if (touchscreen.tirqTouched() && touchscreen.touched()) {
+  bool touched = touchscreen.tirqTouched() && touchscreen.touched();
+  if (idleSwallowTouch(touched)) {  // this touch only wakes the screen
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+  if (touched) {
     TS_Point p = touchscreen.getPoint();
     int x = constrain(map(p.x, 200, 3700, 1, SCREEN_WIDTH), 0, SCREEN_WIDTH - 1);
     int y = constrain(map(p.y, 240, 3800, 1, SCREEN_HEIGHT), 0, SCREEN_HEIGHT - 1);
@@ -51,12 +58,14 @@ void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
 // ============================================================
 void onGear(lv_event_t* e) { requestedScreen = SETTINGS; }
 void onWeatherCard(lv_event_t* e) { requestedScreen = WEATHER; }
+void onClock(lv_event_t* e) { requestedScreen = TIME; }
 void onBack(lv_event_t* e) { requestedScreen = HOME; }
 
 // Build the screen and replace the current one
 void showScreen(Screen s) {
-  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard)
+  lv_obj_t* scr = (s == HOME)     ? buildHomeScreen(onGear, onWeatherCard, onClock)
                 : (s == SETTINGS) ? buildSettingsScreen(onBack)
+                : (s == TIME)     ? buildTimeScreen(onBack)
                                   : buildWeatherScreen(onBack);
   lv_obj_t* old = lv_screen_active();
   lv_screen_load(scr);

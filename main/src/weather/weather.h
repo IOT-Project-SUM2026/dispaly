@@ -2,12 +2,33 @@
 #define WEATHER_H
 #include "../../globals.h"
 #include "../../shared_ui.h"
+#include "../storage/storage.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-#define WEATHER_LAT 32.79
-#define WEATHER_LON 34.99
 #define FORECAST_DAYS 4
+
+struct WeatherCity {
+  const char* name;
+  float lat;
+  float lon;
+};
+
+#define WEATHER_CITY_COUNT 5
+const WeatherCity weatherCities[WEATHER_CITY_COUNT] = {
+  {"Jerusalem",  31.77, 35.21},
+  {"Tel Aviv",   32.08, 34.78},
+  {"Haifa",      32.79, 34.99},
+  {"Beer Sheba", 31.25, 34.79},
+  {"Eilat",      29.56, 34.95},
+};
+int selectedCity = 2;      // Haifa
+bool cityChanged = false;  // set by the dropdown, handled in handleWeather()
+
+// Load the saved city (call after initStorage)
+void initWeather() {
+  selectedCity = constrain(loadInt("city", 2), 0, WEATHER_CITY_COUNT - 1);
+}
 
 struct ForecastDay {
   String day;
@@ -19,7 +40,6 @@ struct ForecastDay {
 int currentTemp = 24;
 uint8_t currentIcon = 0;
 String currentCondition = "Clear";
-String location = "Haifa";
 ForecastDay forecast[FORECAST_DAYS];
 bool weatherLoaded = false;
 
@@ -52,12 +72,17 @@ const char* weekdayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 // Returns true when new data was loaded
 bool fetchWeather() {
+  Serial.println("[Weather] Fetching weather...");
+  unsigned long start = millis();
   bool updated = false;
   HTTPClient http;
-  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(WEATHER_LAT) +
-               "&longitude=" + String(WEATHER_LON) +
+  const WeatherCity& city = weatherCities[selectedCity];
+  // HTTPS: plain HTTP is often held back by campus/office proxies
+  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
+               "&longitude=" + String(city.lon) +
                "&current_weather=true"
                "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+               "&forecast_days=" + String(FORECAST_DAYS) +
                "&timezone=auto";
 
   http.begin(url);
@@ -92,13 +117,12 @@ bool fetchWeather() {
       }
       weatherLoaded = true;
       updated = true;
-      Serial.println("[Weather] Updated");
+      Serial.printf("[Weather] Updated (%s) in %lu ms\n", city.name, millis() - start);
     } else {
       Serial.println("[Weather] JSON parse failed");
     }
   } else {
-    Serial.print("[Weather] HTTP error: ");
-    Serial.println(httpCode);
+    Serial.printf("[Weather] HTTP error: %d (after %lu ms)\n", httpCode, millis() - start);
   }
   http.end();
   return updated;
@@ -131,7 +155,8 @@ void createHomeWeatherCard(lv_obj_t* parent, lv_event_cb_t onClick) {
   lv_obj_t* card = createCard(parent, WEATHER_CARD_X, WEATHER_CARD_Y, WEATHER_CARD_W, WEATHER_CARD_H, 10, onClick);
 
   if (!weatherLoaded) {
-    lv_obj_t* loading = createLabel(card, "Loading weather...", &lv_font_montserrat_14, UI_SECONDARY);
+    String text = String("Loading ") + weatherCities[selectedCity].name + " weather...";
+    lv_obj_t* loading = createLabel(card, text.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
     lv_obj_align(loading, LV_ALIGN_LEFT_MID, 16, 0);
     return;
   }
@@ -144,7 +169,7 @@ void createHomeWeatherCard(lv_obj_t* parent, lv_event_cb_t onClick) {
 
   lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
   lv_obj_align(condition, LV_ALIGN_LEFT_MID, 110, -9);
-  lv_obj_t* place = createLabel(card, location.c_str(), &lv_font_montserrat_14, UI_TEXT);
+  lv_obj_t* place = createLabel(card, weatherCities[selectedCity].name, &lv_font_montserrat_14, UI_TEXT);
   lv_obj_align(place, LV_ALIGN_LEFT_MID, 110, 9);
 
   lv_obj_t* arrow = createLabel(card, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, UI_ACCENT);
@@ -174,6 +199,34 @@ void createForecastCard(lv_obj_t* parent, const ForecastDay& d, int x) {
 }
 
 // ============================================================
+// City dropdown (Weather screen header)
+// ============================================================
+// Only records the choice - handleWeather() shows "Loading..." and fetches
+void onCityChanged(lv_event_t* e) {
+  int city = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e));
+  if (city == selectedCity) return;
+  selectedCity = city;
+  weatherLoaded = false;
+  cityChanged = true;
+  Serial.printf("[Weather] City -> %s\n", weatherCities[city].name);
+  saveInt("city", city);
+}
+
+void createCityDropdown(lv_obj_t* parent) {
+  static char options[64] = "";
+  if (options[0] == '\0') {
+    for (int i = 0; i < WEATHER_CITY_COUNT; i++) {
+      if (i > 0) strcat(options, "\n");
+      strcat(options, weatherCities[i].name);
+    }
+  }
+
+  lv_obj_t* dd = createDropdown(parent, options, selectedCity, onCityChanged);
+  lv_obj_set_size(dd, 124, 32);
+  lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -20, 78);
+}
+
+// ============================================================
 // Full Weather + Forecast screen
 // ============================================================
 lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
@@ -182,11 +235,10 @@ lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
   createWiFiIcon(scr);
   createBackButton(scr, onBack);
 
-  // header: title left, location right, same row
+  // header: title left, city dropdown right, same row
   lv_obj_t* title = createLabel(scr, "Weather", &lv_font_montserrat_28, UI_TEXT);
   lv_obj_set_pos(title, 20, 76);
-  lv_obj_t* place = createLabel(scr, location.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
-  lv_obj_align(place, LV_ALIGN_TOP_RIGHT, -22, 88);
+  createCityDropdown(scr);
 
   createShape(scr, 20, 108, 280, 1, 0, UI_TRACK);
 
@@ -217,10 +269,18 @@ lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
 }
 
 // Fetches every 30 s until the first success, then every 10 min.
-// Returns true when new data arrived (the caller redraws the screen).
+// A failed fetch is retried once right away, then waits for the interval.
+// Returns true when the screen should be redrawn: new data arrived,
+// or the city changed (first redraw shows "Loading...", next pass fetches).
 bool handleWeather() {
   static unsigned long lastAttempt = 0;
   static bool firstAttempt = true;
+  static bool retried = false;
+  if (cityChanged) {
+    cityChanged = false;
+    firstAttempt = true;  // fetch the new city right away
+    return true;
+  }
   unsigned long interval = weatherLoaded ? 600000 : 30000;
   if (!firstAttempt && millis() - lastAttempt < interval) return false;
   firstAttempt = false;
@@ -230,6 +290,15 @@ bool handleWeather() {
     Serial.println("[Weather] Skipped - no WiFi");
     return false;
   }
-  return fetchWeather();
+
+  bool ok = fetchWeather();
+  if (!ok && !retried) {
+    retried = true;
+    firstAttempt = true;  // one immediate retry on the next pass
+    Serial.println("[Weather] Retrying once");
+  } else {
+    retried = false;
+  }
+  return ok;
 }
 #endif

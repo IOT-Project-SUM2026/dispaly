@@ -1,7 +1,8 @@
 # dispaly
 
-ESP32 touchscreen firmware for the Smart Display: home screen, weather + forecast,
-settings (brightness), WiFi status. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
+ESP32 touchscreen firmware for the Smart Display: home screen with clock, world clock,
+weather + forecast for 5 Israeli cities, settings (brightness, 24-hour time, power saving),
+WiFi status. Settings are saved across reboots. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
 
 ## Overview
 
@@ -21,10 +22,13 @@ dispaly/
     ├── build_opt.h           screen + LVGL configuration
     ├── sketch.yaml           pinned versions for Arduino CLI
     └── src/                  one folder per feature
-        ├── home/             home screen
+        ├── home/             home screen (clock card, title, weather card)
+        ├── time_date/        NTP time, home clock, world clock screen
+        ├── idle/             power saving (dim / screen off after inactivity)
+        ├── storage/          settings saved in flash (Preferences)
         ├── touch/            LVGL + display + touch init, screen switching
-        ├── weather/          weather fetch + weather screen
-        ├── settings/         settings screen + brightness
+        ├── weather/          weather fetch, city choice, weather screen
+        ├── settings/         settings screen (brightness, 24h, power saving)
         └── wifi/             WiFi setup portal, connection status
 ```
 
@@ -100,10 +104,13 @@ Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Do
 | `main/main.ino` | `setup()` / `loop()` |
 | `main/globals.h` | screen size, colors (`lv_color_hex`), UI positions |
 | `main/shared_ui.h` | shared LVGL widgets: screen, label, card, shapes/sun icon, WiFi icon, back + gear buttons |
-| `main/src/home/home.h` | `buildHomeScreen()` |
+| `main/src/home/home.h` | `buildHomeScreen()`: clock card, title, weather card |
+| `main/src/time_date/time_date.h` | NTP (Israel time zone with DST), home clock card, `buildTimeScreen()` world clocks, `handleTimeDate()` |
+| `main/src/idle/idle.h` | power saving: `handleIdle()` dims or turns off the backlight after inactivity; the waking touch is ignored |
+| `main/src/storage/storage.h` | `loadInt()` / `saveInt()` over ESP32 Preferences, so settings survive a reboot |
 | `main/src/touch/display_ui.h` | LVGL init (display via `lv_tft_espi`, touch input), current screen, button callbacks, `handleTouch()` (runs `lv_timer_handler()`) / `refreshScreen()` |
-| `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, `buildWeatherScreen()` |
-| `main/src/settings/settings.h` | `buildSettingsScreen()`, brightness `lv_slider` + backlight PWM |
+| `main/src/weather/weather.h` | weather fetch (Open-Meteo, HTTPS, one retry), 5 Israeli cities with a dropdown, home weather card, `buildWeatherScreen()` |
+| `main/src/settings/settings.h` | `buildSettingsScreen()`: scrollable rows for brightness, 24-hour time, power saving options; backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins) and **LVGL configuration** (fonts, TFT_eSPI driver), passed to the compiler automatically |
@@ -113,7 +120,8 @@ Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) and r
 Buttons only request a screen change; `handleTouch()` performs it.
 
 Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
-`handleTouch`, `handleWeather`). Only `handleTouch()` changes the open screen.
+`handleTimeDate`, `handleTouch`, `handleIdle`, `handleWeather`). Features with saved settings load them in
+`init<Feature>()` (`initWeather`, `initTimeDate`, `initIdle`) right after `initStorage()`. Only `handleTouch()` changes the open screen.
 
 Feature folders must stay under `main/src/`: Arduino only compiles the sketch folder and
 its `src/` subfolder. Files in `src/` don't open as tabs in Arduino IDE. Open them with
