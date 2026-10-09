@@ -49,13 +49,9 @@
 #define WEATHER_CARD_W 240
 #define WEATHER_CARD_H 50
 
-// ============================================================
-// Brightness slider (Settings screen)
-// ============================================================
-#define SLIDER_X       52
-#define SLIDER_Y       160
-#define SLIDER_W       240
-
 extern int brightness;
+
+// Forward declaration (implemented in settings.h, also used by idle.h)
+void applyBrightness(int value);
 
 #endif

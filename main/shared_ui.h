@@ -69,6 +69,31 @@ lv_obj_t* createSunIcon(lv_obj_t* parent, int size, lv_color_t color) {
   return box;
 }
 
+// Dropdown in the app style ("\n"-separated options, kept by the caller)
+lv_obj_t* createDropdown(lv_obj_t* parent, const char* options, int selected, lv_event_cb_t onChange) {
+  lv_obj_t* dd = lv_dropdown_create(parent);
+  lv_dropdown_set_options_static(dd, options);
+  lv_dropdown_set_selected(dd, selected);
+  lv_obj_set_style_text_font(dd, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(dd, UI_TEXT, 0);
+  lv_obj_set_style_bg_color(dd, UI_SURFACE, 0);
+  lv_obj_set_style_border_color(dd, UI_TRACK, 0);
+  lv_obj_set_style_border_color(dd, UI_ACCENT, LV_STATE_FOCUSED);
+  lv_obj_set_style_pad_ver(dd, 6, 0);
+  lv_obj_set_style_radius(dd, 8, 0);
+  lv_obj_add_event_cb(dd, onChange, LV_EVENT_VALUE_CHANGED, NULL);
+
+  // the list that opens below it
+  lv_obj_t* list = lv_dropdown_get_list(dd);
+  lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(list, UI_TEXT, 0);
+  lv_obj_set_style_bg_color(list, UI_SURFACE, 0);
+  lv_obj_set_style_border_color(list, UI_TRACK, 0);
+  lv_obj_set_style_bg_color(list, UI_ACCENT_DARK, LV_PART_SELECTED | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(list, UI_TRACK, LV_PART_SELECTED | LV_STATE_PRESSED);
+  return dd;
+}
+
 // ============================================================
 // WiFi icon - created on every screen, updated by connection_status.h
 // ============================================================

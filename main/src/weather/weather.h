@@ -214,28 +214,9 @@ void createCityDropdown(lv_obj_t* parent) {
     }
   }
 
-  lv_obj_t* dd = lv_dropdown_create(parent);
-  lv_dropdown_set_options_static(dd, options);
-  lv_dropdown_set_selected(dd, selectedCity);
+  lv_obj_t* dd = createDropdown(parent, options, selectedCity, onCityChanged);
   lv_obj_set_size(dd, 124, 32);
   lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -20, 78);
-  lv_obj_set_style_text_font(dd, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(dd, UI_TEXT, 0);
-  lv_obj_set_style_bg_color(dd, UI_SURFACE, 0);
-  lv_obj_set_style_border_color(dd, UI_TRACK, 0);
-  lv_obj_set_style_border_color(dd, UI_ACCENT, LV_STATE_FOCUSED);
-  lv_obj_set_style_pad_ver(dd, 6, 0);
-  lv_obj_set_style_radius(dd, 8, 0);
-  lv_obj_add_event_cb(dd, onCityChanged, LV_EVENT_VALUE_CHANGED, NULL);
-
-  // the list that opens below it
-  lv_obj_t* list = lv_dropdown_get_list(dd);
-  lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(list, UI_TEXT, 0);
-  lv_obj_set_style_bg_color(list, UI_SURFACE, 0);
-  lv_obj_set_style_border_color(list, UI_TRACK, 0);
-  lv_obj_set_style_bg_color(list, UI_ACCENT_DARK, LV_PART_SELECTED | LV_STATE_CHECKED);
-  lv_obj_set_style_bg_color(list, UI_TRACK, LV_PART_SELECTED | LV_STATE_PRESSED);
 }
 
 // ============================================================

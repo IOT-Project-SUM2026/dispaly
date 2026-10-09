@@ -2,6 +2,7 @@
 #include "src/wifi/wifi_setup.h"
 #include "shared_ui.h"
 #include "src/wifi/connection_status.h"
+#include "src/idle/idle.h"
 #include "src/settings/settings.h"
 #include "src/weather/weather.h"
 #include "src/time_date/time_date.h"
@@ -20,5 +21,6 @@ void loop() {
   handleConnectionStatus();
   handleTimeDate();
   handleTouch();
+  handleIdle();
   if (handleWeather()) refreshScreen();
 }

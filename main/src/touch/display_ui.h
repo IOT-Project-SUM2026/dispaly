@@ -8,6 +8,7 @@
 #include "../weather/weather.h"
 #include "../settings/settings.h"
 #include "../time_date/time_date.h"
+#include "../idle/idle.h"
 
 int brightness = 200;
 
@@ -34,7 +35,12 @@ uint32_t drawBuf[DRAW_BUF_SIZE / 4];
 // Touch input - LVGL calls this to read the touchscreen
 // ============================================================
 void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
-  if (touchscreen.tirqTouched() && touchscreen.touched()) {
+  bool touched = touchscreen.tirqTouched() && touchscreen.touched();
+  if (idleSwallowTouch(touched)) {  // this touch only wakes the screen
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+  if (touched) {
     TS_Point p = touchscreen.getPoint();
     int x = constrain(map(p.x, 200, 3700, 1, SCREEN_WIDTH), 0, SCREEN_WIDTH - 1);
     int y = constrain(map(p.y, 240, 3800, 1, SCREEN_HEIGHT), 0, SCREEN_HEIGHT - 1);
