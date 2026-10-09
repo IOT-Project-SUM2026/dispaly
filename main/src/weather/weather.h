@@ -71,8 +71,8 @@ bool fetchWeather() {
   bool updated = false;
   HTTPClient http;
   const WeatherCity& city = weatherCities[selectedCity];
-  // plain HTTP: skips the slow TLS handshake (public weather data, nothing private sent)
-  String url = "http://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
+  // HTTPS: plain HTTP is often held back by campus/office proxies
+  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
                "&longitude=" + String(city.lon) +
                "&current_weather=true"
                "&daily=weathercode,temperature_2m_max,temperature_2m_min"
@@ -281,11 +281,13 @@ lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
 }
 
 // Fetches every 30 s until the first success, then every 10 min.
+// A failed fetch is retried once right away, then waits for the interval.
 // Returns true when the screen should be redrawn: new data arrived,
 // or the city changed (first redraw shows "Loading...", next pass fetches).
 bool handleWeather() {
   static unsigned long lastAttempt = 0;
   static bool firstAttempt = true;
+  static bool retried = false;
   if (cityChanged) {
     cityChanged = false;
     firstAttempt = true;  // fetch the new city right away
@@ -300,6 +302,15 @@ bool handleWeather() {
     Serial.println("[Weather] Skipped - no WiFi");
     return false;
   }
-  return fetchWeather();
+
+  bool ok = fetchWeather();
+  if (!ok && !retried) {
+    retried = true;
+    firstAttempt = true;  // one immediate retry on the next pass
+    Serial.println("[Weather] Retrying once");
+  } else {
+    retried = false;
+  }
+  return ok;
 }
 #endif
