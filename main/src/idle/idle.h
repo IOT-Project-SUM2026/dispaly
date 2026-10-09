@@ -1,6 +1,7 @@
 #ifndef IDLE_H
 #define IDLE_H
 #include "../../globals.h"
+#include "../storage/storage.h"
 
 // ============================================================
 // Idle / power saving: after N minutes without touch, dim the
@@ -17,6 +18,14 @@ int idleTimeoutIndex = 2;  // 5 min
 int idleAction = IDLE_DIM;
 int idleDimIndex = 1;      // 10%
 bool isIdle = false;
+
+// Load the saved power saving options (call after initStorage)
+void initIdle() {
+  idleEnabled = loadInt("idleOn", 0) != 0;
+  idleTimeoutIndex = constrain(loadInt("idleAfter", 2), 0, 5);
+  idleAction = constrain(loadInt("idleAction", IDLE_DIM), IDLE_DIM, IDLE_OFF);
+  idleDimIndex = constrain(loadInt("idleDim", 1), 0, 4);
+}
 
 void wakeFromIdle() {
   if (!isIdle) return;

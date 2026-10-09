@@ -2,6 +2,7 @@
 #define WEATHER_H
 #include "../../globals.h"
 #include "../../shared_ui.h"
+#include "../storage/storage.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
@@ -23,6 +24,11 @@ const WeatherCity weatherCities[WEATHER_CITY_COUNT] = {
 };
 int selectedCity = 2;      // Haifa
 bool cityChanged = false;  // set by the dropdown, handled in handleWeather()
+
+// Load the saved city (call after initStorage)
+void initWeather() {
+  selectedCity = constrain(loadInt("city", 2), 0, WEATHER_CITY_COUNT - 1);
+}
 
 struct ForecastDay {
   String day;
@@ -203,6 +209,7 @@ void onCityChanged(lv_event_t* e) {
   weatherLoaded = false;
   cityChanged = true;
   Serial.printf("[Weather] City -> %s\n", weatherCities[city].name);
+  saveInt("city", city);
 }
 
 void createCityDropdown(lv_obj_t* parent) {

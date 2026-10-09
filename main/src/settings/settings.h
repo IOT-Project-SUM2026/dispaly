@@ -4,6 +4,7 @@
 #include "../../shared_ui.h"
 #include "../time_date/time_date.h"
 #include "../idle/idle.h"
+#include "../storage/storage.h"
 
 #define BACKLIGHT_PIN 21
 #define PWM_FREQ 5000
@@ -13,7 +14,9 @@ void applyBrightness(int value) {
   ledcWrite(BACKLIGHT_PIN, value);
 }
 
+// Loads the saved brightness (at least 10 so a saved 0 can't leave the screen dark)
 void initBrightness() {
+  brightness = constrain(loadInt("brightness", 200), 10, 255);
   ledcAttach(BACKLIGHT_PIN, PWM_FREQ, PWM_RES);
   applyBrightness(brightness);
 }
@@ -64,31 +67,40 @@ int dropdownValue(lv_event_t* e) {
   return lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e));
 }
 
+void onBrightnessReleased(lv_event_t* e) {
+  saveInt("brightness", brightness);
+}
+
 void on24hChanged(lv_event_t* e) {
   use24h = switchIsOn(e);
   Serial.printf("[Settings] 24-hour time %s\n", use24h ? "on" : "off");
+  saveInt("use24h", use24h);
 }
 
 void onIdleEnabledChanged(lv_event_t* e) {
   idleEnabled = switchIsOn(e);
   updateIdleRows();
   Serial.printf("[Settings] Power saving %s\n", idleEnabled ? "on" : "off");
+  saveInt("idleOn", idleEnabled);
 }
 
 void onIdleAfterChanged(lv_event_t* e) {
   idleTimeoutIndex = dropdownValue(e);
   Serial.printf("[Settings] Idle after %d min\n", idleTimeoutMinutes[idleTimeoutIndex]);
+  saveInt("idleAfter", idleTimeoutIndex);
 }
 
 void onIdleActionChanged(lv_event_t* e) {
   idleAction = dropdownValue(e);
   updateIdleRows();
   Serial.printf("[Settings] When idle: %s\n", idleAction == IDLE_DIM ? "dim" : "screen off");
+  saveInt("idleAction", idleAction);
 }
 
 void onIdleDimChanged(lv_event_t* e) {
   idleDimIndex = dropdownValue(e);
   Serial.printf("[Settings] Dim to %d%%\n", idleDimPercents[idleDimIndex]);
+  saveInt("idleDim", idleDimIndex);
 }
 
 // ---------- row building blocks ----------
@@ -153,6 +165,7 @@ lv_obj_t* buildSettingsScreen(lv_event_cb_t onBack) {
   lv_obj_set_style_pad_all(slider, 6, LV_PART_KNOB);
   lv_obj_set_ext_click_area(slider, 16);  // easier to grab on a resistive screen
   lv_obj_add_event_cb(slider, onBrightnessChanged, LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_add_event_cb(slider, onBrightnessReleased, LV_EVENT_RELEASED, NULL);  // save once per drag
   brightnessValueLabel = createLabel(row, "", &lv_font_montserrat_14, UI_TEXT);
   lv_obj_align(brightnessValueLabel, LV_ALIGN_RIGHT_MID, -12, 0);
   showBrightnessValue(brightness);

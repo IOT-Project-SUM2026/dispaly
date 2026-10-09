@@ -2,6 +2,7 @@
 #define TIME_DATE_H
 #include "../../globals.h"
 #include "../../shared_ui.h"
+#include "../storage/storage.h"
 #include <WiFi.h>
 #include <time.h>
 
@@ -10,6 +11,11 @@
 
 bool use24h = true;
 bool ntpStarted = false;
+
+// Load the saved time format (call after initStorage)
+void initTimeDate() {
+  use24h = loadInt("use24h", 1) != 0;
+}
 
 // The ESP32 clock starts at 1970 - anything after 2023 means NTP has synced
 bool timeSynced() {

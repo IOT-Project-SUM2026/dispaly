@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "src/storage/storage.h"
 #include "src/wifi/wifi_setup.h"
 #include "shared_ui.h"
 #include "src/wifi/connection_status.h"
@@ -12,7 +13,14 @@
 void setup() {
   Serial.begin(115200);
   Serial.println("[Boot] Smart Display starting");
-  initDisplay();  // shows the home screen
+
+  // load saved settings before the first screen is drawn
+  initStorage();
+  initWeather();
+  initTimeDate();
+  initIdle();
+
+  initDisplay();  // loads brightness, shows the home screen
   connectWiFi();
 }
 
