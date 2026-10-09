@@ -1,8 +1,9 @@
 # dispaly
 
-ESP32 touchscreen firmware for the Smart Display: home screen, weather + forecast,
-settings (brightness), WiFi status, and shopping / to-do lists updated by voice
-commands from the phone app (through Firebase).
+ESP32 touchscreen firmware for the Smart Display: home screen with clock, world clock,
+weather + forecast for 5 Israeli cities, settings (brightness, 24-hour time, power saving),
+WiFi status and shopping / to-do lists updated by voice
+commands from the phone app (through Firebase).. Settings are saved across reboots. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
 
 ## Overview
 
@@ -15,18 +16,22 @@ phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
 
 ```
 dispaly/
+├── upload.bat                one-click build + upload (Windows)
 ├── Documentation/            install instructions, pinout, states & errors
 └── main/                     Arduino sketch (open main/main.ino)
-    ├── main.ino, *.h         general code: setup/loop, globals, shared UI drawing
     ├── secrets.example.h     template for secrets.h (Firebase login, not in git)
-    ├── build_opt.h           screen configuration
+    ├── main.ino, *.h         general code: setup/loop, globals, shared LVGL widgets
+    ├── build_opt.h           screen + LVGL configuration
     ├── sketch.yaml           pinned versions for Arduino CLI
     └── src/                  one folder per feature
-        ├── home/             home screen
-        ├── touch/            display + touch init, touch zones, screen switching
-        ├── weather/          weather fetch + weather screen
-        ├── settings/         settings screen + brightness
-        ├── wifi/             WiFi setup portal, connection status
+        ├── home/             home screen (clock card, title, weather card)
+        ├── time_date/        NTP time, home clock, world clock screen
+        ├── idle/             power saving (dim / screen off after inactivity)
+        ├── storage/          settings saved in flash (Preferences)
+        ├── touch/            LVGL + display + touch init, screen switching
+        ├── weather/          weather fetch, city choice, weather screen
+        ├── settings/         settings screen (brightness, 24h, power saving)
+        └── wifi/             WiFi setup portal, connection status
         ├── lists/            shopping + to-do lists, saved in flash
         └── firebase/         voice commands from the app via Firebase
 ```
@@ -40,6 +45,20 @@ dispaly/
 **ESP32-2432S028R** ("Cheap Yellow Display", CYD): ESP32 + 2.8" 320×240 ILI9341 screen
 + XPT2046 resistive touch, one micro-USB port.
 
+## Quick start (Windows): `upload.bat`
+
+1. Install **Arduino IDE 2** from arduino.cc (the script uses the `arduino-cli` inside it).
+2. Plug in the board (install the **CH340** USB driver if no COM port shows up).
+3. Double-click **`upload.bat`**, type the board's COM port when asked.
+
+The script downloads the exact ESP32 board package and library versions from
+`main/sketch.yaml` on first run, builds with the right partition scheme, uploads, and
+can open the serial monitor. Nothing to install or configure by hand. Close Arduino IDE's
+Serial Monitor first, since it holds the COM port. Run `upload.bat clean` for a full
+rebuild after changing `build_opt.h`.
+
+Prefer Arduino IDE? Follow the two sections below instead.
+
 ## One-time setup (per computer)
 
 1. Install **Arduino IDE 2** from arduino.cc.
@@ -50,6 +69,7 @@ dispaly/
    | Library | Author | Version |
    |---|---|---|
    | TFT_eSPI | Bodmer | 2.5.43 |
+   | lvgl | kisvegabor | 9.6.0 |
    | XPT2046_Touchscreen | Paul Stoffregen | 1.4.0 |
    | WiFiManager | tzapu | 2.0.17 |
    | ArduinoJson | Benoit Blanchon | 7.4.3 |
@@ -61,11 +81,12 @@ dispaly/
 
 1. Open **`main/main.ino`** (always open it from `main/`, see Troubleshooting).
 2. Tools → Board → esp32 → **ESP32 Dev Module**.
-3. Tools → Port → the board's COM port.
-4. Click **Upload**. If it hangs on `Connecting...`, hold the **BOOT** button on the
+3. Tools → Partition Scheme → **Huge APP (3MB No OTA/1MB SPIFFS)**. The firmware doesn't fit the default 1.3 MB app partition with LVGL.
+4. Tools → Port → the board's COM port.
+5. Click **Upload**. If it hangs on `Connecting...`, hold the **BOOT** button on the
    board until the upload starts.
 
-The first build takes several minutes because the whole ESP32 core is compiled.
+The first build takes several minutes because the whole ESP32 core and LVGL are compiled.
 Later builds only recompile your changes and are much faster.
 
 ## First boot: WiFi
@@ -129,38 +150,47 @@ Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Do
 | File | Purpose |
 |---|---|
 | `main/main.ino` | `setup()` / `loop()` |
-| `main/globals.h` | screen size, colors, UI positions |
-| `main/shared_ui.h` | WiFi icon, gear icon, back button drawing |
-| `main/src/home/home.h` | home screen |
-| `main/src/touch/display_ui.h` | display + touch init, all touch zones, current screen, `handleTouch()` / `refreshScreen()` |
-| `main/src/weather/weather.h` | weather fetch (Open-Meteo), home weather card, forecast screen |
-| `main/src/settings/settings.h` | settings screen, brightness slider + backlight PWM |
+| `main/globals.h` | screen size, colors (`lv_color_hex`), UI positions |
+| `main/shared_ui.h` | shared LVGL widgets: screen, label, card, shapes/sun icon, WiFi icon, back + gear buttons |
+| `main/src/home/home.h` | `buildHomeScreen()`: clock card, title, weather card |
+| `main/src/time_date/time_date.h` | NTP (Israel time zone with DST), home clock card, `buildTimeScreen()` world clocks, `handleTimeDate()` |
+| `main/src/idle/idle.h` | power saving: `handleIdle()` dims or turns off the backlight after inactivity; the waking touch is ignored |
+| `main/src/storage/storage.h` | `loadInt()` / `saveInt()` over ESP32 Preferences, so settings survive a reboot |
+| `main/src/touch/display_ui.h` | LVGL init (display via `lv_tft_espi`, touch input), current screen, button callbacks, `handleTouch()` (runs `lv_timer_handler()`) / `refreshScreen()` |
+| `main/src/weather/weather.h` | weather fetch (Open-Meteo, HTTPS, one retry), 5 Israeli cities with a dropdown, home weather card, `buildWeatherScreen()` |
+| `main/src/settings/settings.h` | `buildSettingsScreen()`: scrollable rows for brightness, 24-hour time, power saving options; backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
 | `main/src/lists/lists.h` | shopping + to-do lists in memory, saved to flash; thread-safe add/remove/read for screens |
 | `main/src/firebase/firebase_sync.h` | signs in to Firebase, checks `/command` every second in a background task, writes `/status` |
 | `main/secrets.example.h` | template for `main/secrets.h` (Firebase login, not in git) |
-| `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins), passed to the compiler automatically |
+| `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins) and **LVGL configuration** (fonts, TFT_eSPI driver), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
 
+Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) and rebuilt every time it opens.
+Buttons only request a screen change; `handleTouch()` performs it.
+
 Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
-`handleTouch`, `handleWeather`, `handleFirebase`). Only `handleTouch()` changes the open screen.
+`handleTimeDate`, `handleTouch`, `handleIdle`, `handleWeather`, `handleFirebase`). Features with saved settings load them in
+`init<Feature>()` (`initWeather`, `initTimeDate`, `initIdle`) right after `initStorage()`. Only `handleTouch()` changes the open screen.
 
 Feature folders must stay under `main/src/`: Arduino only compiles the sketch folder and
 its `src/` subfolder. Files in `src/` don't open as tabs in Arduino IDE. Open them with
 File → Open, or open the repo folder in VS Code.
 
-Do **not** edit the TFT_eSPI library's `User_Setup.h`: `build_opt.h` replaces it, so
-the configuration travels with the repo. Changing `build_opt.h` triggers a full rebuild.
+Do **not** edit the TFT_eSPI library's `User_Setup.h` and do **not** add an `lv_conf.h`:
+`build_opt.h` replaces both (`LV_CONF_SKIP`), so the configuration travels with the repo. After changing `build_opt.h`, do a clean build (see Troubleshooting).
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| `TFT_eSPI.h: No such file or directory` | Libraries not installed (setup step 3). |
+| `TFT_eSPI.h` / `lvgl.h`: No such file or directory | Libraries not installed (setup step 3). |
+| `Sketch too big` / `text section exceeds available space` | Tools → Partition Scheme → **Huge APP** (Build and upload, step 3). |
 | `'FS' was not declared in this scope` | `#include <FS.h>` must stay above `#include <TFT_eSPI.h>` in `globals.h`. |
 | Screen stays **white** | Screen not configured: `build_opt.h` wasn't used. Make sure you opened `main/main.ino` from this repo. |
 | Colors wrong / image mirrored | Your board may use an ST7789 screen (common on 2-USB-port CYDs): in `build_opt.h` replace `-DILI9341_2_DRIVER=1` with `-DST7789_DRIVER=1`. |
+| A `build_opt.h` change has no effect / old errors come back | Arduino reuses cached library builds. Close the IDE, delete `%LOCALAPPDATA%\arduino\sketches`, and build again (CLI: `arduino-cli compile --clean`). |
 | No COM port | Install the CH340 driver; try another USB cable (some are charge-only). |
 | `Missing main/secrets.h` | Create it from `secrets.example.h` (see Firebase login). |
 | `Sketch too big` | The firmware uses about 94% of the default program space. Tools → Partition Scheme → **Huge APP (3MB No OTA/1MB SPIFFS)**. |

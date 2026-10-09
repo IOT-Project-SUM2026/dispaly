@@ -3,34 +3,32 @@
 #include "../../globals.h"
 #include "../../shared_ui.h"
 #include "../weather/weather.h"
+#include "../time_date/time_date.h"
 
 // ============================================================
 // Home screen
 // ============================================================
-void drawHomeScreen() {
-  tft.fillScreen(UI_BG);
+lv_obj_t* buildHomeScreen(lv_event_cb_t onGear, lv_event_cb_t onWeatherCard, lv_event_cb_t onClock) {
+  lv_obj_t* scr = createScreen();
 
-  drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
-  drawGearIcon();
+  createWiFiIcon(scr);
+  createGearButton(scr, onGear);
 
-  const char* smart = "Smart";
-  const char* disp = " Display";
+  createHomeClock(scr, onClock);
 
-  tft.setTextFont(4);
-  int smartW = tft.textWidth(smart);
-  int dispW = tft.textWidth(disp);
-  int startX = 160 - (smartW + dispW) / 2;
+  // title: "Smart" + accent "Display", centered
+  lv_obj_t* title = lv_obj_create(scr);
+  lv_obj_remove_style_all(title);
+  lv_obj_set_size(title, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(title, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(title, 6, 0);
+  createLabel(title, "Smart", &lv_font_montserrat_20, UI_TEXT);
+  createLabel(title, "Display", &lv_font_montserrat_20, UI_ACCENT);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 100);
 
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(UI_TEXT, UI_BG);
-  tft.drawString(smart, startX, 112);
-  tft.setTextColor(UI_ACCENT, UI_BG);
-  tft.drawString(disp, startX + smartW, 112);
+  createShape(scr, 141, 128, 38, 3, 1, UI_ACCENT);
 
-  tft.fillRoundRect(151, 133, 58, 4, 2, UI_ACCENT);
-
-  drawHomeWeatherCard();
-
-  tft.setTextDatum(TL_DATUM);
+  createHomeWeatherCard(scr, onWeatherCard);
+  return scr;
 }
 #endif

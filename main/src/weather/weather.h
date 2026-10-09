@@ -2,12 +2,33 @@
 #define WEATHER_H
 #include "../../globals.h"
 #include "../../shared_ui.h"
+#include "../storage/storage.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-#define WEATHER_LAT 32.79
-#define WEATHER_LON 34.99
 #define FORECAST_DAYS 4
+
+struct WeatherCity {
+  const char* name;
+  float lat;
+  float lon;
+};
+
+#define WEATHER_CITY_COUNT 5
+const WeatherCity weatherCities[WEATHER_CITY_COUNT] = {
+  {"Jerusalem",  31.77, 35.21},
+  {"Tel Aviv",   32.08, 34.78},
+  {"Haifa",      32.79, 34.99},
+  {"Beer Sheba", 31.25, 34.79},
+  {"Eilat",      29.56, 34.95},
+};
+int selectedCity = 2;      // Haifa
+bool cityChanged = false;  // set by the dropdown, handled in handleWeather()
+
+// Load the saved city (call after initStorage)
+void initWeather() {
+  selectedCity = constrain(loadInt("city", 2), 0, WEATHER_CITY_COUNT - 1);
+}
 
 struct ForecastDay {
   String day;
@@ -19,7 +40,6 @@ struct ForecastDay {
 int currentTemp = 24;
 uint8_t currentIcon = 0;
 String currentCondition = "Clear";
-String location = "Haifa";
 ForecastDay forecast[FORECAST_DAYS];
 bool weatherLoaded = false;
 
@@ -52,12 +72,17 @@ const char* weekdayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 // Returns true when new data was loaded
 bool fetchWeather() {
+  Serial.println("[Weather] Fetching weather...");
+  unsigned long start = millis();
   bool updated = false;
   HTTPClient http;
-  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(WEATHER_LAT) +
-               "&longitude=" + String(WEATHER_LON) +
+  const WeatherCity& city = weatherCities[selectedCity];
+  // HTTPS: plain HTTP is often held back by campus/office proxies
+  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(city.lat) +
+               "&longitude=" + String(city.lon) +
                "&current_weather=true"
                "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+               "&forecast_days=" + String(FORECAST_DAYS) +
                "&timezone=auto";
 
   http.begin(url);
@@ -92,85 +117,63 @@ bool fetchWeather() {
       }
       weatherLoaded = true;
       updated = true;
-      Serial.println("[Weather] Updated");
+      Serial.printf("[Weather] Updated (%s) in %lu ms\n", city.name, millis() - start);
     } else {
       Serial.println("[Weather] JSON parse failed");
     }
   } else {
-    Serial.print("[Weather] HTTP error: ");
-    Serial.println(httpCode);
+    Serial.printf("[Weather] HTTP error: %d (after %lu ms)\n", httpCode, millis() - start);
   }
   http.end();
   return updated;
 }
 
 // ============================================================
-// Weather icon drawing (shared shape logic, different sizes)
+// Weather icon (sun / cloud / rain) built from simple shapes
 // ============================================================
-void drawWeatherIconShape(int cx, int cy, uint8_t type, uint16_t color, int scale) {
-  if (type == 0) { // sun
-    tft.drawCircle(cx, cy, 7 * scale / 10, color);
-    for (int i = 0; i < 8; i++) {
-      float a = i * 45.0f * DEG_TO_RAD;
-      int x1 = cx + round(cos(a) * 11 * scale / 10);
-      int y1 = cy + round(sin(a) * 11 * scale / 10);
-      int x2 = cx + round(cos(a) * 14 * scale / 10);
-      int y2 = cy + round(sin(a) * 14 * scale / 10);
-      tft.drawLine(x1, y1, x2, y2, color);
+lv_obj_t* createWeatherIcon(lv_obj_t* parent, uint8_t type, int s, lv_color_t color) {
+  if (type == 0) return createSunIcon(parent, s, color);
+
+  lv_obj_t* box = createShape(parent, 0, 0, s, s, 0, color);
+  lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+  int top = (type == 2) ? 0 : s / 8;               // rain: cloud higher, drops below
+  createShape(box, s / 8, top + s / 4, s / 2, s / 2, LV_RADIUS_CIRCLE, color);
+  createShape(box, s * 7 / 20, top + s / 10, s * 3 / 5, s * 3 / 5, LV_RADIUS_CIRCLE, color);
+  createShape(box, 0, top + s * 9 / 20, s, s * 3 / 10, s * 3 / 20, color);
+  if (type == 2) {
+    for (int i = 1; i <= 3; i++) {
+      createShape(box, s * i / 4 - s / 24, s * 4 / 5, s / 12 + 1, s / 5, 2, color);
     }
-  } else if (type == 1) { // cloud
-    tft.drawCircle(cx - 5, cy + 1, 6 * scale / 10, color);
-    tft.drawCircle(cx + 3, cy - 2, 8 * scale / 10, color);
-    tft.drawCircle(cx + 10, cy + 2, 5 * scale / 10, color);
-    tft.drawRoundRect(cx - 10, cy + 1, 25 * scale / 10, 9 * scale / 10, 4, color);
-  } else { // rain
-    tft.drawCircle(cx - 4, cy - 2, 6 * scale / 10, color);
-    tft.drawCircle(cx + 4, cy - 4, 7 * scale / 10, color);
-    tft.drawRoundRect(cx - 10, cy - 2, 23 * scale / 10, 8 * scale / 10, 4, color);
-    tft.drawLine(cx - 5, cy + 9, cx - 8, cy + 14, color);
-    tft.drawLine(cx + 3, cy + 9, cx, cy + 14, color);
   }
+  return box;
 }
 
 // ============================================================
 // Home weather card (tap to open the full Weather page)
 // ============================================================
-void drawHomeWeatherCard() {
-  int x = WEATHER_CARD_X, y = WEATHER_CARD_Y, w = WEATHER_CARD_W, h = WEATHER_CARD_H;
-
-  tft.fillRoundRect(x, y, w, h, 10, UI_SURFACE);
-  tft.drawRoundRect(x, y, w, h, 10, UI_TRACK);
+void createHomeWeatherCard(lv_obj_t* parent, lv_event_cb_t onClick) {
+  lv_obj_t* card = createCard(parent, WEATHER_CARD_X, WEATHER_CARD_Y, WEATHER_CARD_W, WEATHER_CARD_H, 10, onClick);
 
   if (!weatherLoaded) {
-    tft.setTextFont(2);
-    tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-    tft.setTextDatum(ML_DATUM);
-    tft.drawString("Loading weather...", x + 16, y + h / 2);
-    tft.setTextDatum(TL_DATUM);
+    String text = String("Loading ") + weatherCities[selectedCity].name + " weather...";
+    lv_obj_t* loading = createLabel(card, text.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+    lv_obj_align(loading, LV_ALIGN_LEFT_MID, 16, 0);
     return;
   }
 
-  drawWeatherIconShape(x + 24, y + 25, currentIcon, UI_ACCENT, 10);
+  lv_obj_t* icon = createWeatherIcon(card, currentIcon, 28, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
 
-  char temp[8];
-  snprintf(temp, sizeof(temp), "%d\xB0", currentTemp);
-  tft.setTextFont(4);
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(temp, x + 48, y + 25);
+  lv_obj_t* temp = createLabel(card, (String(currentTemp) + "°").c_str(), &lv_font_montserrat_28, UI_TEXT);
+  lv_obj_align(temp, LV_ALIGN_LEFT_MID, 48, 0);
 
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(currentCondition, x + 92, y + 17);
+  lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+  lv_obj_align(condition, LV_ALIGN_LEFT_MID, 110, -9);
+  lv_obj_t* place = createLabel(card, weatherCities[selectedCity].name, &lv_font_montserrat_14, UI_TEXT);
+  lv_obj_align(place, LV_ALIGN_LEFT_MID, 110, 9);
 
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(location, x + 92, y + 34);
-
-  tft.setTextFont(4);
-  tft.setTextColor(UI_ACCENT, UI_SURFACE);
-  tft.drawString(">", x + w - 17, y + 25);
-
-  tft.setTextDatum(TL_DATUM);
+  lv_obj_t* arrow = createLabel(card, LV_SYMBOL_RIGHT, &lv_font_montserrat_14, UI_ACCENT);
+  lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -12, 0);
 }
 
 // ============================================================
@@ -179,102 +182,105 @@ void drawHomeWeatherCard() {
 #define FORECAST_GAP 8
 #define FORECAST_CARD_W 64  // (280 total width - 3 gaps of 8) / 4 cards
 
-void drawForecastCard(const ForecastDay& d, int x) {
-  int y = 174, w = FORECAST_CARD_W, h = 55;
-  tft.fillRoundRect(x, y, w, h, 6, UI_SURFACE);
+void createForecastCard(lv_obj_t* parent, const ForecastDay& d, int x) {
+  lv_obj_t* card = createCard(parent, x, 174, FORECAST_CARD_W, 55, 6, NULL);
+  lv_obj_set_style_border_width(card, 0, 0);
 
-  tft.setTextFont(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(d.day, x + w / 2, y + 6);
+  lv_obj_t* day = createLabel(card, d.day.c_str(), &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(day, LV_ALIGN_TOP_MID, 0, 3);
 
-  drawWeatherIconShape(x + w / 2, y + 26, d.icon, UI_ACCENT, 10);
+  lv_obj_t* icon = createWeatherIcon(card, d.icon, 16, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 19);
 
-  char high[8], low[8];
-  snprintf(high, sizeof(high), "%d\xB0", d.high);
-  snprintf(low, sizeof(low), "%d\xB0", d.low);
+  lv_obj_t* high = createLabel(card, (String(d.high) + "°").c_str(), &lv_font_montserrat_12, UI_TEXT);
+  lv_obj_align(high, LV_ALIGN_BOTTOM_MID, -14, -3);
+  lv_obj_t* low = createLabel(card, (String(d.low) + "°").c_str(), &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(low, LV_ALIGN_BOTTOM_MID, 14, -3);
+}
 
-  // centered within each half of the card, so text can't spill past the edges
-  tft.setTextFont(2);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.drawString(high, x + (int)(w * 0.28), y + 44);
+// ============================================================
+// City dropdown (Weather screen header)
+// ============================================================
+// Only records the choice - handleWeather() shows "Loading..." and fetches
+void onCityChanged(lv_event_t* e) {
+  int city = lv_dropdown_get_selected((lv_obj_t*)lv_event_get_target(e));
+  if (city == selectedCity) return;
+  selectedCity = city;
+  weatherLoaded = false;
+  cityChanged = true;
+  Serial.printf("[Weather] City -> %s\n", weatherCities[city].name);
+  saveInt("city", city);
+}
 
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(low, x + (int)(w * 0.72), y + 44);
+void createCityDropdown(lv_obj_t* parent) {
+  static char options[64] = "";
+  if (options[0] == '\0') {
+    for (int i = 0; i < WEATHER_CITY_COUNT; i++) {
+      if (i > 0) strcat(options, "\n");
+      strcat(options, weatherCities[i].name);
+    }
+  }
 
-  tft.setTextDatum(TL_DATUM);
+  lv_obj_t* dd = createDropdown(parent, options, selectedCity, onCityChanged);
+  lv_obj_set_size(dd, 124, 32);
+  lv_obj_align(dd, LV_ALIGN_TOP_RIGHT, -20, 78);
 }
 
 // ============================================================
 // Full Weather + Forecast screen
 // ============================================================
-void drawWeatherScreen() {
-  tft.fillScreen(UI_BG);
+lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
+  lv_obj_t* scr = createScreen();
 
-  drawWiFiIcon(WIFI_ICON_X, WIFI_ICON_Y, WiFi.status() == WL_CONNECTED);
-  drawBackButton();
+  createWiFiIcon(scr);
+  createBackButton(scr, onBack);
 
-  // header: title left, location right, same row
-  tft.setTextFont(4);
-  tft.setTextColor(UI_TEXT, UI_BG);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString("Weather", 20, 80);
+  // header: title left, city dropdown right, same row
+  lv_obj_t* title = createLabel(scr, "Weather", &lv_font_montserrat_28, UI_TEXT);
+  lv_obj_set_pos(title, 20, 76);
+  createCityDropdown(scr);
 
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_BG);
-  tft.setTextDatum(TR_DATUM);
-  tft.drawString(location, 298, 90);
-
-  tft.drawFastHLine(20, 108, 280, UI_TRACK);
+  createShape(scr, 20, 108, 280, 1, 0, UI_TRACK);
 
   if (!weatherLoaded) {
-    tft.setTextFont(2);
-    tft.setTextColor(UI_SECONDARY, UI_BG);
-    tft.setTextDatum(TL_DATUM);
-    tft.drawString("Loading...", 20, 130);
-    return;
+    lv_obj_t* loading = createLabel(scr, "Loading...", &lv_font_montserrat_14, UI_SECONDARY);
+    lv_obj_set_pos(loading, 20, 130);
+    return scr;
   }
 
   // compact current-weather card: icon, temp, condition, single row
-  int cardX = 20, cardY = 115, cardW = 280, cardH = 40;
-  tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, UI_SURFACE);
+  lv_obj_t* card = createCard(scr, 20, 115, 280, 40, 8, NULL);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_t* icon = createWeatherIcon(card, currentIcon, 24, UI_ACCENT);
+  lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
+  lv_obj_t* temp = createLabel(card, (String(currentTemp) + "°").c_str(), &lv_font_montserrat_20, UI_TEXT);
+  lv_obj_align(temp, LV_ALIGN_LEFT_MID, 50, 0);
+  lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &lv_font_montserrat_14, UI_SECONDARY);
+  lv_obj_align(condition, LV_ALIGN_LEFT_MID, 110, 0);
 
-  drawWeatherIconShape(cardX + 24, cardY + cardH / 2, currentIcon, UI_ACCENT, 10);
+  // forecast label + row
+  lv_obj_t* label = createLabel(scr, "4-DAY FORECAST", &lv_font_montserrat_12, UI_SECONDARY);
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 158);
 
-  char temp[8];
-  snprintf(temp, sizeof(temp), "%d\xB0", currentTemp);
-  tft.setTextFont(4);
-  tft.setTextColor(UI_TEXT, UI_SURFACE);
-  tft.setTextDatum(ML_DATUM);
-  tft.drawString(temp, cardX + 50, cardY + cardH / 2);
-
-  tft.setTextFont(2);
-  tft.setTextColor(UI_SECONDARY, UI_SURFACE);
-  tft.drawString(currentCondition, cardX + 110, cardY + cardH / 2);
-
-  // forecast label
-  tft.setTextFont(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(UI_SECONDARY, UI_BG);
-  tft.drawString("4-DAY FORECAST", 160, 163);
-
-  int xs[FORECAST_DAYS];
   for (int i = 0; i < FORECAST_DAYS; i++) {
-    xs[i] = 20 + i * (FORECAST_CARD_W + FORECAST_GAP);
+    createForecastCard(scr, forecast[i], 20 + i * (FORECAST_CARD_W + FORECAST_GAP));
   }
-  for (int i = 0; i < FORECAST_DAYS; i++) {
-    drawForecastCard(forecast[i], xs[i]);
-  }
-
-  tft.setTextDatum(TL_DATUM);
+  return scr;
 }
 
 // Fetches every 30 s until the first success, then every 10 min.
-// Returns true when new data arrived (the caller redraws the screen).
+// A failed fetch is retried once right away, then waits for the interval.
+// Returns true when the screen should be redrawn: new data arrived,
+// or the city changed (first redraw shows "Loading...", next pass fetches).
 bool handleWeather() {
   static unsigned long lastAttempt = 0;
   static bool firstAttempt = true;
+  static bool retried = false;
+  if (cityChanged) {
+    cityChanged = false;
+    firstAttempt = true;  // fetch the new city right away
+    return true;
+  }
   unsigned long interval = weatherLoaded ? 600000 : 30000;
   if (!firstAttempt && millis() - lastAttempt < interval) return false;
   firstAttempt = false;
@@ -284,6 +290,15 @@ bool handleWeather() {
     Serial.println("[Weather] Skipped - no WiFi");
     return false;
   }
-  return fetchWeather();
+
+  bool ok = fetchWeather();
+  if (!ok && !retried) {
+    retried = true;
+    firstAttempt = true;  // one immediate retry on the next pass
+    Serial.println("[Weather] Retrying once");
+  } else {
+    retried = false;
+  }
+  return ok;
 }
 #endif
