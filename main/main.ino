@@ -9,6 +9,7 @@
 #include "src/time_date/time_date.h"
 #include "src/home/home.h"
 #include "src/touch/display_ui.h"
+#include "src/firebase/firebase_sync.h"
 
 void setup() {
   Serial.begin(115200);
@@ -22,6 +23,7 @@ void setup() {
 
   initDisplay();  // loads brightness, shows the home screen
   connectWiFi();
+  startFirebase();
 }
 
 void loop() {
@@ -31,4 +33,5 @@ void loop() {
   handleTouch();
   handleIdle();
   if (handleWeather()) refreshScreen();
+  if (handleFirebase()) refreshScreen();
 }

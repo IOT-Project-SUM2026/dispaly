@@ -2,7 +2,8 @@
 
 ESP32 touchscreen firmware for the Smart Display: home screen with clock, world clock,
 weather + forecast for 5 Israeli cities, settings (brightness, 24-hour time, power saving),
-WiFi status. Settings are saved across reboots. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
+WiFi status and shopping / to-do lists updated by voice
+commands from the phone app (through Firebase).. Settings are saved across reboots. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
 
 ## Overview
 
@@ -18,6 +19,7 @@ dispaly/
 ├── upload.bat                one-click build + upload (Windows)
 ├── Documentation/            install instructions, pinout, states & errors
 └── main/                     Arduino sketch (open main/main.ino)
+    ├── secrets.example.h     template for secrets.h (Firebase login, not in git)
     ├── main.ino, *.h         general code: setup/loop, globals, shared LVGL widgets
     ├── build_opt.h           screen + LVGL configuration
     ├── sketch.yaml           pinned versions for Arduino CLI
@@ -30,6 +32,8 @@ dispaly/
         ├── weather/          weather fetch, city choice, weather screen
         ├── settings/         settings screen (brightness, 24h, power saving)
         └── wifi/             WiFi setup portal, connection status
+        ├── lists/            shopping + to-do lists, saved in flash
+        └── firebase/         voice commands from the app via Firebase
 ```
 
 - [Documentation/install_instructions.txt](Documentation/install_instructions.txt): step-by-step setup
@@ -95,6 +99,50 @@ The display starts right away and works offline. Until WiFi is set up it shows t
 3. The board connects (the WiFi icon updates within ~2 s) and the weather appears. It remembers
    the network, so later boots skip this step.
 
+## Firebase login (voice commands)
+
+The display signs in to Firebase as its own user, so it needs a `main/secrets.h` file.
+It is in `.gitignore`: **never upload it to GitHub** (also not by drag-and-drop on the website).
+
+1. Copy `main/secrets.example.h` to `main/secrets.h`.
+2. Fill in the four values. All come from the Firebase console, project `smart-display-5f14b`:
+   - `FIREBASE_DATABASE_URL`: already filled in
+   - `FIREBASE_API_KEY`: Project settings → General → Your apps → `apiKey`
+   - `FIREBASE_USER_EMAIL` / `FIREBASE_USER_PASSWORD`: the display's user from
+     Authentication → Users (ask the teammate who created it)
+3. Upload as usual. The Serial Monitor shows `[Firebase] Signed in`, then
+   `[Firebase] Listening for commands`.
+
+Firebase setup this relies on (done once, in the console):
+- Authentication → Sign-in method → **Email/Password** enabled, and a user for the display.
+- Realtime Database → Rules: `{ "rules": { ".read": "auth != null", ".write": "auth != null" } }`.
+  The phone app's backend uses the Admin SDK, which ignores these rules.
+
+### How voice commands reach the display
+
+The app writes `/command` = `{ "type": "add" | "remove", "item": "milk", "list": "shopping" | "todo", "runningCount": 5 }`.
+`runningCount` goes up by 1 with every command. The display checks `/command` every second
+and, when the number changes, updates the list and writes
+`/status` = `{ "runningCount": 5, "success": true, "text": "Added milk to your shopping list" }`.
+The app waits up to 60 s for a `/status` with the same number and shows the result.
+
+- Removing an item that isn't on the list, or adding to a full list (20 items), sends `success: false`.
+- Adding an item that is already there sends `success: true` ("milk is already on your shopping list").
+- At startup the display skips the command already in `/command`: it was sent while the display
+  was off, and the app has already told the user it wasn't confirmed.
+- Firebase runs in its own FreeRTOS task on core 0, so checking the database never freezes the
+  touchscreen (`loop()` runs on core 1).
+- The lists exist only on the display (Firebase holds just the latest command), saved in flash.
+  A list screen reads them with `listSize()` / `listItem()` from `src/lists/lists.h` and can
+  remove a tapped item with `removeItemAt()`. Until there is one, the Serial Monitor prints the
+  list after every change.
+
+### Test without the phone app
+
+In the Firebase console, open Realtime Database → Data and edit `/command`: set `type`, `item`,
+`list`, and change `runningCount` to a number it hasn't had yet. Within about a second the
+Serial Monitor shows the command and the updated list, and `/status` changes in the console.
+
 Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Documentation/errors_and_states.md) for the log messages.
 
 ## Project files
@@ -113,6 +161,9 @@ Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Do
 | `main/src/settings/settings.h` | `buildSettingsScreen()`: scrollable rows for brightness, 24-hour time, power saving options; backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
+| `main/src/lists/lists.h` | shopping + to-do lists in memory, saved to flash; thread-safe add/remove/read for screens |
+| `main/src/firebase/firebase_sync.h` | signs in to Firebase, checks `/command` every second in a background task, writes `/status` |
+| `main/secrets.example.h` | template for `main/secrets.h` (Firebase login, not in git) |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins) and **LVGL configuration** (fonts, TFT_eSPI driver), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
 
@@ -120,7 +171,7 @@ Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) and r
 Buttons only request a screen change; `handleTouch()` performs it.
 
 Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
-`handleTimeDate`, `handleTouch`, `handleIdle`, `handleWeather`). Features with saved settings load them in
+`handleTimeDate`, `handleTouch`, `handleIdle`, `handleWeather`, `handleFirebase`). Features with saved settings load them in
 `init<Feature>()` (`initWeather`, `initTimeDate`, `initIdle`) right after `initStorage()`. Only `handleTouch()` changes the open screen.
 
 Feature folders must stay under `main/src/`: Arduino only compiles the sketch folder and
@@ -141,6 +192,8 @@ Do **not** edit the TFT_eSPI library's `User_Setup.h` and do **not** add an `lv_
 | Colors wrong / image mirrored | Your board may use an ST7789 screen (common on 2-USB-port CYDs): in `build_opt.h` replace `-DILI9341_2_DRIVER=1` with `-DST7789_DRIVER=1`. |
 | A `build_opt.h` change has no effect / old errors come back | Arduino reuses cached library builds. Close the IDE, delete `%LOCALAPPDATA%\arduino\sketches`, and build again (CLI: `arduino-cli compile --clean`). |
 | No COM port | Install the CH340 driver; try another USB cable (some are charge-only). |
+| `Missing main/secrets.h` | Create it from `secrets.example.h` (see Firebase login). |
+| `Sketch too big` | The firmware uses about 94% of the default program space. Tools → Partition Scheme → **Huge APP (3MB No OTA/1MB SPIFFS)**. |
 
 ## Arduino CLI (optional)
 
