@@ -1,2 +1,10 @@
 # Firebase login for the display - each person keeps their own copy
 main/secrets.h
+# copies of secrets.h used by the unit tests
+unit_tests/**/secrets.h
+# never commit keys of the app / Firebase admin account
+.env
+*firebase-adminsdk*.json
+# build output
+build/
+*.bin

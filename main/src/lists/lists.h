@@ -12,8 +12,10 @@
 // only place the lists exist. They are saved to the board's flash
 // after every change and loaded again at boot.
 //
-// No screen code here: a list screen reads the lists with listSize()
-// and listItem(), and can remove a tapped item with removeItemAt().
+// No screen code here (lists_screen.h): screens read the lists with
+// listSize() and listItem(), and remove a tapped item with removeItem().
+// firebase_sync.h also copies the lists to Firebase (/lists) after every
+// change, and later if there was no WiFi at that moment.
 // Every function is safe to call from loop() and from the Firebase
 // task at the same time (they share listsMutex).
 // ============================================================
@@ -35,6 +37,7 @@ struct ListsData {
 
 ListsData listsData;
 SemaphoreHandle_t listsMutex = nullptr;
+volatile uint32_t listsVersion = 1;  // +1 on every change; firebase_sync.h uploads the lists when it differs
 
 // "shopping" / "todo" as written by the app -> ListId
 ListId listFromName(const char* name) {
@@ -55,8 +58,9 @@ static void lockLists()   { xSemaphoreTake(listsMutex, portMAX_DELAY); }
 static void unlockLists() { xSemaphoreGive(listsMutex); }
 
 // Trims spaces and shortens the name to fit, without cutting a
-// multi-byte UTF-8 character (e.g. a Hebrew letter) in half
-static void cleanItemName(char* dst, const char* src) {
+// multi-byte UTF-8 character (e.g. a Hebrew letter) in half.
+// dst must hold LIST_ITEM_LEN bytes.
+void cleanItemName(char* dst, const char* src) {
   while (*src == ' ' || *src == '\t') src++;
   size_t len = strlen(src);
   while (len > 0 && (src[len - 1] == ' ' || src[len - 1] == '\t')) len--;
@@ -77,6 +81,7 @@ static int findItemLocked(ListId list, const char* name) {
 }
 
 static void saveListsLocked() {
+  listsVersion = listsVersion + 1;
   Preferences prefs;
   if (prefs.begin("lists", false)) {
     prefs.putBytes("data", &listsData, sizeof(ListsData));
@@ -95,8 +100,7 @@ static void removeAtLocked(ListId list, int index) {
   saveListsLocked();
 }
 
-// Prints e.g. "[Lists] Shopping list (2): milk, eggs" - the way to see
-// the lists until there is a list screen
+// Prints e.g. "[Lists] Shopping list (2): milk, eggs"
 void printList(ListId list) {
   if (!validList(list)) return;
   lockLists();
@@ -182,6 +186,17 @@ bool removeItemAt(ListId list, int index) {
   }
   unlockLists();
   return removed;
+}
+
+// Position of an item in the list (same matching as addItem/removeItem), or -1
+int listIndexOf(ListId list, const char* name) {
+  char clean[LIST_ITEM_LEN];
+  cleanItemName(clean, name);
+  if (!validList(list) || clean[0] == '\0') return -1;
+  lockLists();
+  int index = findItemLocked(list, clean);
+  unlockLists();
+  return index;
 }
 
 int listSize(ListId list) {

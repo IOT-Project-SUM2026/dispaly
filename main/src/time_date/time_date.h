@@ -42,34 +42,56 @@ void formatDate(const struct tm& t, char* buf, size_t len) {
   snprintf(buf, len, "%s, %d %s", day, t.tm_mday, month);
 }
 
+// "Sunday 11 Oct"
+void formatLongDate(const struct tm& t, char* buf, size_t len) {
+  char day[12], month[4];
+  strftime(day, sizeof(day), "%A", &t);
+  strftime(month, sizeof(month), "%b", &t);
+  snprintf(buf, len, "%s %d %s", day, t.tm_mday, month);
+}
+
 // ============================================================
-// Home clock card - labels are updated in place by handleTimeDate()
+// Home clock (big digits, tap: world clock). Labels are updated
+// in place by handleTimeDate(), never rebuilt.
 // ============================================================
-lv_obj_t* clockCard = NULL;       // the card that owns the labels below
+lv_obj_t* clockBox = NULL;       // owns the labels below
 lv_obj_t* clockTimeLabel = NULL;
 lv_obj_t* clockAmPmLabel = NULL;
 lv_obj_t* clockDateLabel = NULL;
+lv_obj_t* clockTopLabel = NULL;   // top row, left of the WiFi icon
 
-bool setLabelIfChanged(lv_obj_t* label, const char* text) {
-  bool changed = false;
-  if (strcmp(lv_label_get_text(label), text) != 0) {
-    lv_label_set_text(label, text);
-    changed = true;
-  }
-  return changed;
+
+const char* greetingFor(int hour) {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 22) return "Good evening";
+  return "Good night";
+}
+
+// Lines the clock's left edge up with the date and the cards (x 12): each
+// digit has a little empty space before it (from font_display_40.c), so the
+// label moves left by that amount. AM/PM follows the clock's real width.
+// Lines the clock's left edge up with the greeting, the date and the cards
+// (x 12): each digit has a little empty space before it in font_display.c,
+// so the label moves left by that amount. AM/PM follows the clock's width.
+static void alignClock(const char* text) {
+  static const int8_t firstGapPx[10] = {1, 3, 1, 1, 1, 2, 1, 2, 1, 1};  // '0'..'9'
+  int gap = (text[0] >= '0' && text[0] <= '9') ? firstGapPx[text[0] - '0'] : 2;  // '-': 2
+  lv_obj_set_x(clockTimeLabel, MARGIN - 4 - gap);  // the tap box starts at x 4
+  lv_obj_update_layout(clockTimeLabel);
+  lv_obj_align_to(clockAmPmLabel, clockTimeLabel, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, -3);
 }
 
 void updateHomeClock() {
-  if (clockTimeLabel == NULL){
-    Serial.println("[Time] clock labels are NULL, skipping update");
-    return;
-  }
+  if (clockTimeLabel == NULL) return;
 
   if (!timeSynced()) {
     setLabelIfChanged(clockTimeLabel, "--:--");
-    setLabelIfChanged(clockDateLabel, "Waiting for time sync");
-    lv_obj_add_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
-    Serial.printf("[Time] waiting for sync\n");
+    setLabelIfChanged(clockAmPmLabel, "");
+    alignClock("--:--");
+    const char* waiting = WiFi.status() == WL_CONNECTED ? "Getting the time..." : "Waiting for WiFi";
+    setLabelIfChanged(clockTopLabel, "Hello");
+    setLabelIfChanged(clockDateLabel, waiting);
     return;
   }
 
@@ -77,62 +99,68 @@ void updateHomeClock() {
   time_t now = time(NULL);
   localtime_r(&now, &t);
 
-  char timeBuf[8], ampmBuf[4], dateBuf[20];
+  char timeBuf[8], ampmBuf[4], dateBuf[24];
   formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
-  formatDate(t, dateBuf, sizeof(dateBuf));
-
-  bool c1, c2, c3;
-  c1 = setLabelIfChanged(clockTimeLabel, timeBuf);
-  c2 = setLabelIfChanged(clockDateLabel, dateBuf);
-  c3 = setLabelIfChanged(clockAmPmLabel, ampmBuf);
-  if (c1 || c2 || c3) {
-    Serial.printf("[Time] updated: %s %s %s\n", timeBuf, ampmBuf, dateBuf);
-  }
-  
-  if (use24h) lv_obj_add_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_remove_flag(clockAmPmLabel, LV_OBJ_FLAG_HIDDEN);
+  formatLongDate(t, dateBuf, sizeof(dateBuf));
+  bool changed = setLabelIfChanged(clockTimeLabel, timeBuf);
+  changed |= setLabelIfChanged(clockAmPmLabel, ampmBuf);
+  changed |= setLabelIfChanged(clockDateLabel, dateBuf);
+  if (changed) alignClock(timeBuf);
+  setLabelIfChanged(clockTopLabel, greetingFor(t.tm_hour));
+  setLabelIfChanged(clockDateLabel, dateBuf);
 }
 
 // The new Home screen is built before the old one is deleted, so only
-// clear the labels if the deleted card is the one that owns them
+// clear the labels if the deleted box is the one that owns them
 void onHomeClockDeleted(lv_event_t* e) {
-  if (lv_event_get_target(e) != clockCard) return;
-  clockCard = clockTimeLabel = clockAmPmLabel = clockDateLabel = NULL;
+  if (lv_event_get_target(e) != clockBox) return;
+  clockBox = clockTimeLabel = clockAmPmLabel = clockDateLabel = clockTopLabel = NULL;
 }
 
+// Left half of the top of Home: x 4..160, y 4..116 (tap area), text starts at x 12
 void createHomeClock(lv_obj_t* parent, lv_event_cb_t onClick) {
-  lv_obj_t* card = createCard(parent, 60, 12, 200, 72, 14, onClick);
-  lv_obj_set_style_bg_grad_color(card, UI_BG, 0);           // soft top-to-bottom fade
-  lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, 0);
-  lv_obj_add_event_cb(card, onHomeClockDeleted, LV_EVENT_DELETE, NULL);
-  clockCard = card;
+  lv_obj_t* box = createCard(parent, 4, 4, COL_W + 12, 108, onClick, &stFlat);
+  lv_obj_set_style_radius(box, 12, 0);  // shape of the pressed highlight
+  lv_obj_add_event_cb(box, onHomeClockDeleted, LV_EVENT_DELETE, NULL);
+  clockBox = box;
 
-  // time + AM/PM on one baseline
-  lv_obj_t* row = lv_obj_create(card);
-  lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-  lv_obj_set_style_pad_column(row, 4, 0);
-  lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(row, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 8);
-
-  clockTimeLabel = createLabel(row, "--:--", &lv_font_montserrat_28, UI_TEXT);
-  lv_obj_set_style_text_letter_space(clockTimeLabel, 2, 0);
-  clockAmPmLabel = createLabel(row, "", &lv_font_montserrat_14, UI_ACCENT);
-  lv_obj_set_style_pad_bottom(clockAmPmLabel, 4, 0);
-
-  createShape(card, 84, 44, 32, 2, 1, UI_ACCENT);  // thin accent line
-
-  clockDateLabel = createLabel(card, "", &lv_font_montserrat_14, UI_SECONDARY);
-  lv_obj_align(clockDateLabel, LV_ALIGN_BOTTOM_MID, 0, -6);
-
+  // Greeting on the top row; clock and date as one group next to the weather card.
+  // Hierarchy: the clock is the brightest thing; the greeting is a quieter
+  // grey heading; the date sits right under the clock in the accent color
+  clockTopLabel = createLabel(box, "", &stTitle);
+  lv_obj_add_style(clockTopLabel, &stSecondary, 0);
+  lv_obj_set_style_text_font(clockTopLabel, &font_hebrew_20, 0);  // grey, still 20 px
+  lv_obj_set_pos(clockTopLabel, 8, 7);
+  // clock and date 8 px apart; the date sits on the same line as the city name
+  const int digitsY = 52 - 3;  // the digits start 3 px below the label's top
+  clockDateLabel = createLabel(box, "", &stAccent);
+  lv_obj_set_pos(clockDateLabel, 8, 87);
+  clockTimeLabel = createLabel(box, "--:--", &stDisplay);
+  lv_obj_set_pos(clockTimeLabel, 8, digitsY);
+  clockAmPmLabel = createLabel(box, "", &stSmall);  // 12-hour clock only
   updateHomeClock();
+  alignClock(lv_label_get_text(clockTimeLabel));
+}
+
+// Small clock in the header of the other screens (shared_ui.h)
+void updateStatusClock() {
+  if (statusClock == NULL) return;
+  if (!timeSynced()) {
+    setLabelIfChanged(statusClock, "");
+    return;
+  }
+  struct tm t;
+  time_t now = time(NULL);
+  localtime_r(&now, &t);
+  char timeBuf[8], ampmBuf[4], text[16];
+  formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
+  snprintf(text, sizeof(text), "%s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
+  setLabelIfChanged(statusClock, text);
 }
 
 // ============================================================
-// World clock screen
+// World clock screen: 6 cities as a 2 x 3 grid of tiles
+// (the local time is in the header)
 // ============================================================
 struct WorldCity {
   const char* name;
@@ -158,93 +186,128 @@ void timeIn(const char* tz, time_t now, struct tm* out) {
   tzset();
 }
 
-// "Today" / "Tomorrow" / "Yesterday" compared to Israel
-const char* dayDifference(const struct tm& city, const struct tm& local) {
-  int diff = (city.tm_year - local.tm_year) * 400 + (city.tm_yday - local.tm_yday);
-  if (diff > 0) return "Tomorrow";
-  if (diff < 0) return "Yesterday";
-  return "Today";
+
+lv_obj_t* worldList = NULL;  // owns the objects below (same pattern as the home clock)
+lv_obj_t* worldDials[WORLD_CITY_COUNT];
+lv_obj_t* worldTimeLabels[WORLD_CITY_COUNT];
+
+// ------------------------------------------------------------
+// Analog dial: LVGL's lv_scale widget in round mode (12 ticks,
+// 0..60 around the circle) with two line needles. Light face from
+// 6:00 to 18:00, dark face at night (state LV_STATE_USER_1), so day
+// and night show at a glance. The needles move once a minute.
+// ------------------------------------------------------------
+lv_obj_t* worldHourHands[WORLD_CITY_COUNT];
+lv_obj_t* worldMinuteHands[WORLD_CITY_COUNT];
+lv_obj_t* worldDialCaps[WORLD_CITY_COUNT];
+int worldDialMinutes[WORLD_CITY_COUNT];
+
+static lv_obj_t* createDial(lv_obj_t* parent, int size, int i) {
+  lv_obj_t* dial = lv_scale_create(parent);
+  lv_obj_remove_style_all(dial);
+  lv_obj_set_size(dial, size, size);
+  lv_scale_set_mode(dial, LV_SCALE_MODE_ROUND_INNER);
+  lv_scale_set_range(dial, 0, 60);
+  lv_scale_set_total_tick_count(dial, 13);     // one every 5 minutes (every hour)
+  lv_scale_set_major_tick_every(dial, 3);      // 12, 3, 6, 9 are major
+  lv_scale_set_angle_range(dial, 360);
+  lv_scale_set_rotation(dial, 270);            // 0 at the top
+  lv_scale_set_label_show(dial, false);
+  lv_obj_add_style(dial, &stDialFace, LV_PART_MAIN);
+  lv_obj_add_style(dial, &stDialFaceNight, LV_PART_MAIN | LV_STATE_USER_1);
+  lv_obj_add_style(dial, &stDialTicks, LV_PART_INDICATOR);
+  lv_obj_add_style(dial, &stDialTicksNight, LV_PART_INDICATOR | LV_STATE_USER_1);
+  lv_obj_set_style_length(dial, 0, LV_PART_ITEMS);  // only the 4 major ticks
+  passClicks(dial);
+
+  worldHourHands[i] = lv_line_create(dial);
+  lv_obj_add_style(worldHourHands[i], &stDialHour, 0);
+  lv_obj_add_style(worldHourHands[i], &stDialHourNight, LV_STATE_USER_1);
+  worldMinuteHands[i] = lv_line_create(dial);
+  lv_obj_add_style(worldMinuteHands[i], &stDialMinute, 0);
+  lv_obj_t* cap = lv_obj_create(dial);  // small dot over the middle, where the hands meet
+  lv_obj_remove_style_all(cap);
+  lv_obj_set_size(cap, 6, 6);
+  lv_obj_center(cap);
+  lv_obj_add_style(cap, &stDialCap, 0);
+  lv_obj_add_style(cap, &stDialCapNight, LV_STATE_USER_1);
+  passClicks(cap);
+  worldDialCaps[i] = cap;
+  worldDialMinutes[i] = -2;
+  return dial;
 }
 
-lv_obj_t* worldCard = NULL;  // owns the labels below (same pattern as the home clock)
-lv_obj_t* worldLocalTimeLabel = NULL;
-lv_obj_t* worldLocalDateLabel = NULL;
-lv_obj_t* worldTimeLabels[WORLD_CITY_COUNT];
-lv_obj_t* worldDayLabels[WORLD_CITY_COUNT];
-
-void updateWorldClock() {
-  if (worldCard == NULL) return;
-
-  if (!timeSynced()) {
-    setLabelIfChanged(worldLocalTimeLabel, "--:--");
-    setLabelIfChanged(worldLocalDateLabel, "Jerusalem - waiting for time sync");
-    for (int i = 0; i < WORLD_CITY_COUNT; i++) {
-      setLabelIfChanged(worldTimeLabels[i], "--:--");
-      setLabelIfChanged(worldDayLabels[i], "");
-    }
+static void setDial(int i, int minutes) {
+  if (worldDialMinutes[i] == minutes) return;
+  worldDialMinutes[i] = minutes;
+  lv_obj_t* dial = worldDials[i];
+  if (minutes < 0) {  // time unknown: no hands
+    lv_obj_add_flag(worldHourHands[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(worldMinuteHands[i], LV_OBJ_FLAG_HIDDEN);
     return;
   }
+  lv_obj_remove_flag(worldHourHands[i], LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(worldMinuteHands[i], LV_OBJ_FLAG_HIDDEN);
+  bool night = minutes < 6 * 60 || minutes >= 18 * 60;
+  lv_state_t st = LV_STATE_USER_1;
+  lv_obj_t* parts[] = {dial, worldHourHands[i], worldDialCaps[i]};
+  for (lv_obj_t* o : parts) {
+    if (night) lv_obj_add_state(o, st);
+    else lv_obj_remove_state(o, st);
+  }
 
+  lv_obj_update_layout(dial);  // the needles are placed from the dial's position on screen
+  int r = lv_obj_get_width(dial) / 2;
+  int hourValue = (minutes / 60 % 12) * 5 + (minutes % 60) / 12;  // the hour hand on the 0..60 scale
+  lv_scale_set_line_needle_value(dial, worldHourHands[i], r * 45 / 100, hourValue);
+  lv_scale_set_line_needle_value(dial, worldMinuteHands[i], r * 72 / 100, minutes % 60);
+}
+
+void updateWorldClock() {
+  if (worldList == NULL) return;
+  bool synced = timeSynced();
   time_t now = time(NULL);
-  struct tm local;
-  localtime_r(&now, &local);
-
-  char timeBuf[8], ampmBuf[4], text[32];
-  formatClock(local, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
-  snprintf(text, sizeof(text), "%s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
-  setLabelIfChanged(worldLocalTimeLabel, text);
-  char dateBuf[20];
-  formatDate(local, dateBuf, sizeof(dateBuf));
-  snprintf(text, sizeof(text), "Jerusalem - %s", dateBuf);
-  setLabelIfChanged(worldLocalDateLabel, text);
-
   for (int i = 0; i < WORLD_CITY_COUNT; i++) {
+    if (!synced) {
+      setLabelIfChanged(worldTimeLabels[i], "--:--");
+      setDial(i, -1);
+      continue;
+    }
     struct tm city;
     timeIn(worldCities[i].tz, now, &city);
+    char timeBuf[8], ampmBuf[4], text[24];
     formatClock(city, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
     snprintf(text, sizeof(text), "%s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
     setLabelIfChanged(worldTimeLabels[i], text);
-    setLabelIfChanged(worldDayLabels[i], dayDifference(city, local));
+    setDial(i, city.tm_hour * 60 + city.tm_min);
   }
 }
 
 void onWorldClockDeleted(lv_event_t* e) {
-  if (lv_event_get_target(e) != worldCard) return;
-  worldCard = worldLocalTimeLabel = worldLocalDateLabel = NULL;
+  if (lv_event_get_target(e) == worldList) worldList = NULL;
 }
 
+// World clock: 2 x 3 tiles, each with an analog dial (light by day, dark
+// at night) next to the city name and the digital time
 lv_obj_t* buildTimeScreen(lv_event_cb_t onBack) {
   lv_obj_t* scr = createScreen();
+  createHeader(scr, "World Clock", onBack);
+  worldList = createBox(scr, 0, CONTENT_Y, SCREEN_WIDTH, SCREEN_HEIGHT - CONTENT_Y);
+  lv_obj_add_event_cb(worldList, onWorldClockDeleted, LV_EVENT_DELETE, NULL);
 
-  createWiFiIcon(scr);
-  createBackButton(scr, onBack);
-
-  // header: title + Jerusalem date on the left, Jerusalem time on the right
-  lv_obj_t* title = createLabel(scr, "World Clock", &lv_font_montserrat_20, UI_TEXT);
-  lv_obj_set_pos(title, 60, 42);
-  worldLocalDateLabel = createLabel(scr, "", &lv_font_montserrat_12, UI_SECONDARY);
-  lv_obj_set_pos(worldLocalDateLabel, 60, 66);
-  worldLocalTimeLabel = createLabel(scr, "", &lv_font_montserrat_28, UI_ACCENT);
-  lv_obj_align(worldLocalTimeLabel, LV_ALIGN_TOP_RIGHT, -14, 42);
-
-  // one card with a row per city: name | day | time
-  worldCard = createCard(scr, 12, 90, 296, 146, 10, NULL);
-  lv_obj_add_event_cb(worldCard, onWorldClockDeleted, LV_EVENT_DELETE, NULL);
-
+  const int tileH = 60;
   for (int i = 0; i < WORLD_CITY_COUNT; i++) {
-    int y = 4 + i * 23;
-    if (i > 0) createShape(worldCard, 10, y - 2, 274, 1, 0, UI_TRACK);  // row separator
-
-    lv_obj_t* name = createLabel(worldCard, worldCities[i].name, &lv_font_montserrat_14, UI_TEXT);
-    lv_obj_set_pos(name, 12, y + 2);
-
-    worldDayLabels[i] = createLabel(worldCard, "", &lv_font_montserrat_12, UI_SECONDARY);
-    lv_obj_set_pos(worldDayLabels[i], 120, y + 4);
-
-    worldTimeLabels[i] = createLabel(worldCard, "", &lv_font_montserrat_14, UI_ACCENT);
-    lv_obj_align(worldTimeLabels[i], LV_ALIGN_TOP_RIGHT, -12, y + 2);
+    int x = MARGIN + (i % 2) * (COL_W + GAP);
+    int y = (i / 2) * (tileH + 6);
+    lv_obj_t* tile = createCard(worldList, x, y, COL_W, tileH, NULL);
+    worldDials[i] = createDial(tile, 38, i);
+    lv_obj_set_pos(worldDials[i], 8, (tileH - 2 - 38) / 2);
+    lv_obj_t* name = createLabel(tile, worldCities[i].name, &stSecondary);
+    makeSingleLine(name, COL_W - 2 - 52 - 2);  // "Los Angeles" just fits
+    lv_obj_set_pos(name, 52, 8);
+    worldTimeLabels[i] = createLabel(tile, "", &stTitle);
+    lv_obj_set_pos(worldTimeLabels[i], 52, 26);
   }
-
   updateWorldClock();
   return scr;
 }
@@ -255,7 +318,8 @@ lv_obj_t* buildTimeScreen(lv_event_cb_t onBack) {
 // ============================================================
 void handleTimeDate() {
   if (!ntpStarted && WiFi.status() == WL_CONNECTED) {
-    configTzTime(LOCAL_TZ, "pool.ntp.org", "time.google.com");
+    // course guide: other time servers are blocked on Technion WiFi, so the Technion one goes first
+    configTzTime(LOCAL_TZ, "ntp.technion.ac.il", "pool.ntp.org", "time.google.com");
     ntpStarted = true;
     Serial.println("[Time] NTP started");
   }
@@ -275,6 +339,7 @@ void handleTimeDate() {
   }
 
   updateHomeClock();
+  updateStatusClock();
   updateWorldClock();
 }
 #endif

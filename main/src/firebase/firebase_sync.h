@@ -4,6 +4,7 @@
 #include <NetworkClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <freertos/queue.h>
 #include "../lists/lists.h"
 
 #if __has_include("../../secrets.h")
@@ -26,7 +27,12 @@
 // never freezes the touchscreen (loop() runs on core 1).
 // It signs in as the display's own Firebase user (Email/Password),
 // checks /command every second, applies new commands to the lists
-// and writes /status back.
+// and writes /status back. handleFirebase() then tells loop() which
+// list changed, so the screen can show it.
+// It also keeps a copy of both lists in /lists = {shopping: [...], todo: [...]}:
+// after every change (voice or touch), and right after WiFi comes back
+// if a change was made offline.
+// This task never touches the screen: LVGL may only be used from loop().
 // ============================================================
 
 #define FIREBASE_POLL_MS     1000    // how often /command is checked
@@ -40,7 +46,17 @@ static unsigned long fbTokenLifetimeMs = 0;
 static long fbLastCount = -1;        // last runningCount handled; -1 = /command not read yet since boot
 static String fbPendingStatus;       // /status not delivered yet
 static bool fbSetupError = false;    // wrong login or database setup: retry less often
-static volatile bool fbListsChanged = false;
+
+// A command that was applied, passed from the Firebase task to loop()
+struct VoiceCommand {
+  ListId list;
+  bool onList;                  // true: the item is on the list now (added, or was already there)
+  bool success;                 // what the app was told
+  char item[LIST_ITEM_LEN];
+  char text[80];                // e.g. "Added milk to your shopping list" (shown on the screen)
+};
+static uint32_t fbUploadedListsVersion = 0;  // lists version last copied to /lists (0 = never)
+static QueueHandle_t fbCommandQueue = nullptr;
 
 // One kept-open (keep-alive) connection to the database, reused every second.
 // setInsecure(): the connection is encrypted but the server's certificate
@@ -70,6 +86,7 @@ static bool fbAuthRequest(const String& url, const String& body, const char* con
                           JsonDocument& response, int& httpCode) {
   NetworkClientSecure client;
   client.setInsecure();
+  client.setHandshakeTimeout(15);  // seconds (default 120)
   HTTPClient http;
   http.setReuse(false);
   if (!http.begin(client, url)) {
@@ -182,9 +199,18 @@ static void fbApplyCommand(const char* type, const char* item, const char* listN
     case LIST_FULL:          success = false; text = "Your " + label + " is full"; break;
     default:                 success = false; text = "The display couldn't understand this command"; break;
   }
-  if (result == LIST_ADDED || result == LIST_REMOVED) {
-    printList(list);
-    fbListsChanged = true;
+  if (result == LIST_ADDED || result == LIST_REMOVED) printList(list);
+
+  // tell loop() so the screen shows the list (also when nothing changed, e.g. "already there")
+  if (result != LIST_BAD_ITEM) {
+    VoiceCommand command;
+    command.list = list;
+    command.onList = result == LIST_ADDED || result == LIST_ALREADY_THERE;
+    command.success = success;
+    cleanItemName(command.item, item);
+    strncpy(command.text, text.c_str(), sizeof(command.text) - 1);
+    command.text[sizeof(command.text) - 1] = '\0';
+    xQueueSend(fbCommandQueue, &command, 0);  // if loop() is behind, extra commands are dropped (lists are still updated)
   }
 }
 
@@ -248,8 +274,30 @@ static bool fbSendPendingStatus() {
   return false;
 }
 
+// Copies both lists to /lists when they changed since the last copy.
+// Offline changes stay "not copied" and are sent once the connection is back.
+static void fbUploadLists() {
+  uint32_t version = listsVersion;
+  if (version == fbUploadedListsVersion) return;
+
+  JsonDocument doc;
+  for (int l = 0; l < LIST_COUNT; l++) {
+    JsonArray items = doc[l == LIST_TODO ? "todo" : "shopping"].to<JsonArray>();
+    char name[LIST_ITEM_LEN];
+    for (int i = 0; listItem((ListId)l, i, name, sizeof(name)); i++) items.add(name);
+  }
+  String body, reply;
+  serializeJson(doc, body);
+  int code = fbDbRequest(true, "/lists", body, reply);
+  if (code == 200) {
+    Serial.printf("[Firebase] Lists saved to /lists%s\n", fbUploadedListsVersion == 0 ? " (startup)" : "");
+    fbUploadedListsVersion = version;  // changes made meanwhile have a higher version: sent next round
+  }
+}
+
 static void firebaseTask(void*) {
   fbDbClient.setInsecure();
+  fbDbClient.setHandshakeTimeout(15);  // seconds (default 120): recover sooner if WiFi drops mid-connection
   fbDbHttp.setReuse(true);  // keep the connection open between checks
   int lastErrorCode = 0;
 
@@ -263,6 +311,7 @@ static void firebaseTask(void*) {
       continue;
     }
     if (!fbSendPendingStatus()) continue;
+    fbUploadLists();
 
     String payload;
     int code = fbDbRequest(false, "/command", "", payload);
@@ -284,17 +333,16 @@ static void firebaseTask(void*) {
 // Called from main.ino
 // ============================================================
 
-// Once in setup(), after connectWiFi()
+// Once in setup(), after initLists() and connectWiFi()
 void startFirebase() {
-  initLists();
+  fbCommandQueue = xQueueCreate(4, sizeof(VoiceCommand));
   xTaskCreatePinnedToCore(firebaseTask, "firebase", FIREBASE_TASK_STACK, nullptr, 1, nullptr, 0);
   Serial.println("[Firebase] Started");
 }
 
-// In loop(). Returns true when a voice command changed a list (the caller redraws the screen).
-bool handleFirebase() {
-  if (!fbListsChanged) return false;
-  fbListsChanged = false;
-  return true;
+// In loop(). Returns true when a voice command was applied; `command` says
+// which list and item (the caller shows that list).
+bool handleFirebase(VoiceCommand& command) {
+  return fbCommandQueue && xQueueReceive(fbCommandQueue, &command, 0) == pdTRUE;
 }
 #endif

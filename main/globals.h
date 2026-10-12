@@ -11,47 +11,32 @@
 #define SCREEN_HEIGHT 240
 
 // ============================================================
-// Color palette (deep navy + electric cyan)
+// Layout grid (design system, see Documentation/ui_design.md)
+// Spacing scale: 4 / 8 / 12 / 16.
 // ============================================================
-#define UI_BG          lv_color_hex(0x0B0F14)
-#define UI_SURFACE     lv_color_hex(0x141A22)
-#define UI_TEXT        lv_color_hex(0xE6EAF1)
-#define UI_SECONDARY   lv_color_hex(0x8993A4)
-#define UI_ACCENT      lv_color_hex(0x00C2FF)
-#define UI_ACCENT_DARK lv_color_hex(0x007FA8)
-#define UI_TRACK       lv_color_hex(0x273445)
-#define UI_OFFLINE     lv_color_hex(0xFF5C67)
+#define MARGIN     12   // left/right screen margin
+#define GAP        8    // between cards
+#define HEADER_H   44   // header bar on every screen except Home
+#define CONTENT_Y  48   // content starts below the header
+#define TOUCH_MIN  44   // smallest tap target (resistive touch)
+#define ROW_H      44   // list / settings row height
+#define COL_W      ((SCREEN_WIDTH - 2 * MARGIN - GAP) / 2)  // 144: half-width card
 
 // ============================================================
-// Gear button (top-right, opens Settings)
+// Colors: one struct per theme (src/theme/theme.h). Screens never
+// use colors directly; they use the shared styles in theme.h,
+// which read these.
 // ============================================================
-#define GEAR_X 300
-#define GEAR_Y 20
-
-// ============================================================
-// WiFi icon (top-left, all screens)
-// ============================================================
-#define WIFI_ICON_X 20
-#define WIFI_ICON_Y 20
-
-// ============================================================
-// Back button (circular, Settings + Weather screens)
-// ============================================================
-#define BACK_CX 30
-#define BACK_CY 58
-#define BACK_R  18
-
-// ============================================================
-// Home weather card
-// ============================================================
-#define WEATHER_CARD_X 40
-#define WEATHER_CARD_Y 158
-#define WEATHER_CARD_W 240
-#define WEATHER_CARD_H 50
+struct Theme {
+  uint32_t bg, surface, surfaceHi, border, text, secondary, accent, accentPressed, onAccent, danger;
+  uint32_t sun, cloud;  // weather icons
+};
+extern const Theme* theme;
 
 extern int brightness;
 
-// Forward declaration (implemented in settings.h, also used by idle.h)
-void applyBrightness(int value);
+// Forward declarations
+void applyBrightness(int value);  // settings.h, also used by idle.h
+void requestRefresh();            // display_ui.h: rebuild the open screen after the current touch
 
 #endif

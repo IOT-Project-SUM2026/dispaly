@@ -1,49 +1,111 @@
-# dispaly
+# Smart Display - ESP32 firmware (`dispaly`)
 
-ESP32 touchscreen firmware for the Smart Display: home screen with clock, world clock,
-weather + forecast for 5 Israeli cities, settings (brightness, 24-hour time, power saving),
-WiFi status and shopping / to-do lists updated by voice
-commands from the phone app (through Firebase).. Settings are saved across reboots. The UI is built with **LVGL 9**, using TFT_eSPI as the display driver.
+A smart display for the desk or the kitchen: time and date, a world clock, weather and a
+4-day forecast for 5 Israeli cities, your Google Calendar, and shopping / to-do lists that
+you update **by voice** from a phone app (through Gemini and Firebase). Touch interface with
+dark and light themes, English and Hebrew text, power saving, and it keeps working offline.
+This repository is the ESP32 firmware; the phone app is in its own repository (below).
 
-## Overview
+<!-- Poster: add a photo of the project poster as assets/poster.jpg and remove the comment marks:
+![Project poster](assets/poster.jpg)
+-->
 
-Part of **Smart Display** (IoT project course 236333, Technion, group 5) by
-Shada Nujeidat, Yuval Carmelli and Liat Rokach. A smart display that shows personal
-information (weather, time, calendar, lists) and receives voice commands sent from a
-phone app through Gemini and Firebase. This repo is the ESP32 display firmware.
+![Screens](assets/screens_dark.png)
 
-## Folder description
+## Team
 
-```
-dispaly/
-├── upload.bat                one-click build + upload (Windows)
-├── Documentation/            install instructions, pinout, states & errors
-└── main/                     Arduino sketch (open main/main.ino)
-    ├── secrets.example.h     template for secrets.h (Firebase login, not in git)
-    ├── main.ino, *.h         general code: setup/loop, globals, shared LVGL widgets
-    ├── build_opt.h           screen + LVGL configuration
-    ├── sketch.yaml           pinned versions for Arduino CLI
-    └── src/                  one folder per feature
-        ├── home/             home screen (clock card, title, weather card)
-        ├── time_date/        NTP time, home clock, world clock screen
-        ├── idle/             power saving (dim / screen off after inactivity)
-        ├── storage/          settings saved in flash (Preferences)
-        ├── touch/            LVGL + display + touch init, screen switching
-        ├── weather/          weather fetch, city choice, weather screen
-        ├── settings/         settings screen (brightness, 24h, power saving)
-        └── wifi/             WiFi setup portal, connection status
-        ├── lists/            shopping + to-do lists, saved in flash
-        └── firebase/         voice commands from the app via Firebase
-```
+IoT project course 236333, Technion Faculty of Computer Science, group 5א:
+**Shada Nujeidat, Yuval Carmelli, Liat Rokach**.
 
-- [Documentation/install_instructions.txt](Documentation/install_instructions.txt): step-by-step setup
-- [Documentation/pinout_wiring.md](Documentation/pinout_wiring.md): CYD pins and further reading
-- [Documentation/errors_and_states.md](Documentation/errors_and_states.md): what the display shows in each state
+## Project repositories
+
+| Repository | Contents |
+|---|---|
+| **dispaly** (this one) | ESP32 firmware, unit tests, documentation, diagrams |
+| **Smart Display app** (`<add link>`) | phone web app (PWA) + Node.js backend that sends the voice recording to Gemini and writes the command to Firebase. Libraries and versions: its `package.json` |
+
+The final version of each repository is on its `main` (master) branch.
+
+## How it works
+
+![System overview](assets/system_overview.png)
+
+1. The phone app records a command ("add milk to the shopping list") and sends it to the backend.
+2. The backend asks Gemini to turn it into JSON `{action, item, list}`, checks it, and writes it to Firebase `/command`.
+3. The display checks `/command` every second (in its own task on the second CPU core), updates the list, saves it in flash, shows it with a pop-up, and writes the result to `/status`.
+4. The app shows the result. Weather (Open-Meteo), calendar (Google Calendar API) and time (NTP) are downloaded by the display directly.
 
 ## Hardware
 
-**ESP32-2432S028R** ("Cheap Yellow Display", CYD): ESP32 + 2.8" 320×240 ILI9341 screen
-+ XPT2046 resistive touch, one micro-USB port.
+| Part | Quantity | Notes |
+|---|---|---|
+| ESP32-2432S028R "Cheap Yellow Display" (ESP32 + 2.8" 320×240 ILI9341 screen + XPT2046 resistive touch) | 1 | everything is on this one board |
+| Micro-USB data cable | 1 | some cables are charge-only and won't upload |
+| USB power adapter, 5 V ≥ 1 A | 1 | a laptop port may be too weak with WiFi and the backlight on |
+| Enclosure: front bezel, back shell, stand leg (3D printed, PLA) | 1 set | [assets/enclosure_sketch.png](assets/enclosure_sketch.png) |
+| M3 screws (6 mm ×4 for the board, 10 mm ×4 for the case) | 8 | for the enclosure |
+| Smartphone with a browser | - | the user's own, runs the voice app |
+
+### Wiring diagram
+
+All parts are on the board, so there is no external wiring: only the USB cable.
+Pins: [Documentation/pinout_wiring.md](Documentation/pinout_wiring.md).
+
+![Wiring diagram](assets/wiring_diagram.png)
+
+## Versions
+
+| | Version |
+|---|---|
+| Arduino IDE | 2.x |
+| Board package: esp32 by Espressif Systems | 3.3.12 (board: ESP32 Dev Module, partition: Huge APP) |
+| TFT_eSPI (Bodmer) | 2.5.43 |
+| lvgl (kisvegabor) | 9.6.0 |
+| XPT2046_Touchscreen (Paul Stoffregen) | 1.4.0 |
+| WiFiManager (tzapu) | 2.0.17 |
+| ArduinoJson (Benoit Blanchon) | 7.4.3 |
+
+The same versions are pinned in `main/sketch.yaml`, so `upload.bat` / `arduino-cli` install exactly these.
+
+## What's in this repository
+
+```
+dispaly/
+├── README.md                 this file
+├── upload.bat                one-click build + upload (Windows)
+├── main/                     Arduino sketch (open main/main.ino)
+│   ├── secrets.example.h     template for secrets.h (Firebase login, calendar key; secrets.h is not in git)
+│   ├── main.ino, *.h         setup/loop, globals, shared LVGL widgets
+│   ├── build_opt.h           screen + LVGL configuration
+│   ├── sketch.yaml           pinned versions for Arduino CLI
+│   └── src/                  one folder per feature
+│       ├── home/             home screen (greeting, clock, weather, Lists and Next event cards)
+│       ├── time_date/        NTP time, home clock, world clock screen
+│       ├── idle/             power saving (dim / screen off after inactivity)
+│       ├── storage/          settings saved in flash (Preferences)
+│       ├── theme/            design system: colors, shared styles, clock and Hebrew fonts
+│       ├── touch/            LVGL + display + touch init, screen switching, voice command pop-up
+│       ├── weather/          weather fetch (all cities at once), city choice, weather screen
+│       ├── settings/         settings screen (folding sections: display, clock, power saving)
+│       ├── wifi/             WiFi setup portal, connection status
+│       ├── lists/            shopping + to-do lists (saved in flash), lists screen
+│       ├── calendar/         Google Calendar events, calendar screen
+│       └── firebase/         voice commands from the app via Firebase
+├── unit_tests/               one sketch per hardware part / service, see unit_tests/README.md
+├── Documentation/            guides (list below)
+└── assets/                   diagrams, enclosure sketch, screenshots (assets/screenshots/)
+```
+
+| Document | Contents |
+|---|---|
+| [Documentation/user_guide.md](Documentation/user_guide.md) | how to use the display and the app, what each indicator means |
+| [Documentation/install_instructions.txt](Documentation/install_instructions.txt) | step-by-step setup for developers |
+| [Documentation/parameters.md](Documentation/parameters.md) | every hard-coded parameter, saved settings, touch calibration |
+| [Documentation/errors_and_states.md](Documentation/errors_and_states.md) | what the display shows in each state, log messages, errors and fixes |
+| [Documentation/pinout_wiring.md](Documentation/pinout_wiring.md) | CYD pins and further reading |
+| [Documentation/ui_design.md](Documentation/ui_design.md) | the design system (colors, fonts, spacing) and screen layouts |
+| [unit_tests/README.md](unit_tests/README.md) | the 9 hardware / service tests and how to run them |
+| [Documentation/course_submissions/](Documentation/course_submissions/) | course documents: user stories, HW unit tests report (with results), feasibility tests, edge cases design, enclosure sketch |
 
 ## Quick start (Windows): `upload.bat`
 
@@ -132,10 +194,9 @@ The app waits up to 60 s for a `/status` with the same number and shows the resu
   was off, and the app has already told the user it wasn't confirmed.
 - Firebase runs in its own FreeRTOS task on core 0, so checking the database never freezes the
   touchscreen (`loop()` runs on core 1).
-- The lists exist only on the display (Firebase holds just the latest command), saved in flash.
-  A list screen reads them with `listSize()` / `listItem()` from `src/lists/lists.h` and can
-  remove a tapped item with `removeItemAt()`. Until there is one, the Serial Monitor prints the
-  list after every change.
+- The display holds the lists (saved in flash, so they work offline) and keeps a copy in
+  Firebase `/lists`. Screens read them with `listSize()` / `listItem()` from `src/lists/lists.h`;
+  every access goes through a lock, because the Firebase task changes them too.
 
 ### Test without the phone app
 
@@ -145,29 +206,60 @@ Serial Monitor shows the command and the updated list, and `/status` changes in 
 
 Logs: Tools → Serial Monitor at **115200** baud. See [errors_and_states.md](Documentation/errors_and_states.md) for the log messages.
 
+## Voice commands on the screen
+
+When a command arrives the display wakes up, opens the list it changed (a new item is
+shown in the accent color) and shows the result at the top for 3 s, e.g. "Added milk to your
+shopping list" (no transcription, per the instructor). If nobody touches it, it goes back
+home after 30 s. The Firebase task never draws: it hands each command to `loop()` through a
+FreeRTOS queue, because LVGL may only be used from one task.
+
+The display also keeps a copy of both lists in Firebase at `/lists`. A change made without
+WiFi is saved on the board and copied as soon as the connection is back.
+
+## Google Calendar (optional)
+
+The display reads a **public** Google calendar with an **API key**. Without it the calendar
+shows "Not set up" and everything else works.
+
+1. Google Calendar (computer) → Other calendars → + → Create new calendar.
+2. Its Settings and sharing → Access permissions → **Make available to public** (See all event details).
+3. Integrate calendar → copy the **Calendar ID**.
+4. console.cloud.google.com → project `smart-display-5f14b` → APIs & Services → Library → **Google Calendar API** → Enable.
+5. APIs & Services → Credentials → Create credentials → **API key**. Edit the key → API restrictions → **Restrict key** → Google Calendar API, so the key can't be used for anything else.
+6. Add both to `main/secrets.h` (lines are in `secrets.example.h`): `CALENDAR_ID`, `CALENDAR_API_KEY`.
+
 ## Project files
 
 | File | Purpose |
 |---|---|
 | `main/main.ino` | `setup()` / `loop()` |
-| `main/globals.h` | screen size, colors (`lv_color_hex`), UI positions |
-| `main/shared_ui.h` | shared LVGL widgets: screen, label, card, shapes/sun icon, WiFi icon, back + gear buttons |
-| `main/src/home/home.h` | `buildHomeScreen()`: clock card, title, weather card |
-| `main/src/time_date/time_date.h` | NTP (Israel time zone with DST), home clock card, `buildTimeScreen()` world clocks, `handleTimeDate()` |
+| `main/globals.h` | screen size, layout grid (margins, header and row heights), `Theme` struct |
+| `main/shared_ui.h` | shared LVGL widgets: screen, label, card, header bar (back, title, time, WiFi), icon buttons, dropdown, messages, weather icons; Hebrew-aware text helpers |
+| `main/src/home/home.h` | `buildHomeScreen()`: greeting, clock, weather / Lists / Next event cards; `refreshHomeCard()` rebuilds only the card whose data changed |
+| `main/src/theme/theme.h` | design system: dark and light palettes and every shared `lv_style_t`; Dark mode rewrites the styles in place (no rebuild) |
+| `main/src/theme/font_display.c` | big digits for the clock and temperatures (Ubuntu Medium, digits only, ~4 KB) |
+| `main/src/theme/font_hebrew_14.c`, `font_hebrew_20.c` | Hebrew letters, falling back to Montserrat for everything else |
+| `main/src/lists/lists_screen.h` | `buildListsScreen()`: Shopping / To-do switch in the top bar, tap an item to tick it off (only that row changes; removed after 2 s, tap again to keep); home Lists card |
+| `main/src/calendar/calendar.h` | Google Calendar API request and events (no drawing), checked every 10 min |
+| `main/src/calendar/calendar_screen.h` | `buildCalendarScreen()` (events grouped by day, the event that is on now marked), home Next event card |
+| `main/src/time_date/time_date.h` | NTP (Israel time zone with DST), home greeting and clock, header clock, `buildTimeScreen()` world clock (LVGL `lv_scale` dials), `handleTimeDate()` |
 | `main/src/idle/idle.h` | power saving: `handleIdle()` dims or turns off the backlight after inactivity; the waking touch is ignored |
 | `main/src/storage/storage.h` | `loadInt()` / `saveInt()` over ESP32 Preferences, so settings survive a reboot |
 | `main/src/touch/display_ui.h` | LVGL init (display via `lv_tft_espi`, touch input), current screen, button callbacks, `handleTouch()` (runs `lv_timer_handler()`) / `refreshScreen()` |
-| `main/src/weather/weather.h` | weather fetch (Open-Meteo, HTTPS, one retry), 5 Israeli cities with a dropdown, home weather card, `buildWeatherScreen()` |
-| `main/src/settings/settings.h` | `buildSettingsScreen()`: scrollable rows for brightness, 24-hour time, power saving options; backlight PWM |
+| `main/src/weather/weather.h` | weather for all 5 cities in ONE request (Open-Meteo, every 10 min), saved per city so switching cities is instant; home weather card, `buildWeatherScreen()` with the city button |
+| `main/src/settings/settings.h` | `buildSettingsScreen()`: folding sections (Display, Clock, Power saving); backlight PWM |
 | `main/src/wifi/wifi_setup.h` | WiFiManager setup portal (`SmartDisplay-Setup`), non-blocking |
 | `main/src/wifi/connection_status.h` | polls WiFi every 2 s, logs changes and updates the icon on any screen |
 | `main/src/lists/lists.h` | shopping + to-do lists in memory, saved to flash; thread-safe add/remove/read for screens |
-| `main/src/firebase/firebase_sync.h` | signs in to Firebase, checks `/command` every second in a background task, writes `/status` |
-| `main/secrets.example.h` | template for `main/secrets.h` (Firebase login, not in git) |
+| `main/src/firebase/firebase_sync.h` | signs in to Firebase, checks `/command` every second in a background task, writes `/status`, copies the lists to `/lists` (also after an offline change, once WiFi is back); passes each command to `loop()` through a queue |
+| `main/secrets.example.h` | template for `main/secrets.h` (Firebase login, optional Google Calendar; not in git) |
 | `main/build_opt.h` | **TFT_eSPI screen configuration** (driver + pins) and **LVGL configuration** (fonts, TFT_eSPI driver), passed to the compiler automatically |
 | `main/sketch.yaml` | pinned board/library versions for Arduino CLI |
 
-Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) and rebuilt every time it opens.
+Each screen is an LVGL screen built by its feature (`build<Name>Screen()`) when it opens. New data only
+rebuilds the part that shows it (one home card, the weather content, a list row), and colors come only
+from the shared styles in `theme.h`, so the dark/light switch restyles everything without a rebuild.
 Buttons only request a screen change; `handleTouch()` performs it.
 
 Each feature's loop function is named `handle<Feature>()` (`handleWiFi`, `handleConnectionStatus`,
@@ -193,7 +285,8 @@ Do **not** edit the TFT_eSPI library's `User_Setup.h` and do **not** add an `lv_
 | A `build_opt.h` change has no effect / old errors come back | Arduino reuses cached library builds. Close the IDE, delete `%LOCALAPPDATA%\arduino\sketches`, and build again (CLI: `arduino-cli compile --clean`). |
 | No COM port | Install the CH340 driver; try another USB cable (some are charge-only). |
 | `Missing main/secrets.h` | Create it from `secrets.example.h` (see Firebase login). |
-| `Sketch too big` | The firmware uses about 94% of the default program space. Tools → Partition Scheme → **Huge APP (3MB No OTA/1MB SPIFFS)**. |
+| Calendar says "Not set up" | Add `CALENDAR_ID` and `CALENDAR_API_KEY` to `secrets.h` (see Google Calendar below). |
+| Items or events show `???` | Characters the fonts don't have (emoji, Arabic...). English and Hebrew are supported. |
 
 ## Arduino CLI (optional)
 
