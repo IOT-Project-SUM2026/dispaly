@@ -42,8 +42,6 @@ The final version of each repository is on its `main` (master) branch.
 | ESP32-2432S028R "Cheap Yellow Display" (ESP32 + 2.8" 320×240 ILI9341 screen + XPT2046 resistive touch) | 1 | everything is on this one board |
 | Micro-USB data cable | 1 | some cables are charge-only and won't upload |
 | USB power adapter, 5 V ≥ 1 A | 1 | a laptop port may be too weak with WiFi and the backlight on |
-| Enclosure: front bezel, back shell, stand leg (3D printed, PLA) | 1 set | [assets/enclosure_sketch.png](assets/enclosure_sketch.png) |
-| M3 screws (6 mm ×4 for the board, 10 mm ×4 for the case) | 8 | for the enclosure |
 | Smartphone with a browser | - | the user's own, runs the voice app |
 
 ### Wiring diagram
