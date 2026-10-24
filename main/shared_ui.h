@@ -3,6 +3,7 @@
 #include "globals.h"
 #include "src/theme/theme.h"
 #include <WiFi.h>
+#include "src/net/net.h"
 #include <lvgl_private.h>  // lv_text_get_width() (makeSingleLine)
 
 // ============================================================
@@ -197,13 +198,21 @@ lv_obj_t* createIconButton(lv_obj_t* parent, const char* symbol, int x, int y, l
 // header. Updated in place by connection_status.h / time_date.h.
 // ============================================================
 lv_obj_t* wifiIcon = NULL;
+bool wifiIconCompact = false;  // Home: problems show only a red warning sign (the text is in the top row)
+void updateHomeClock();        // time_date.h
 lv_obj_t* statusClock = NULL;  // header clock (not on Home, which has the big clock)
 
-void updateWiFiIcon(bool connected) {
+// WiFi icon, "⚠ No WiFi" or "⚠ No internet" (WiFi works, but no
+// server has answered for 20 s, e.g. the router lost its internet)
+void updateWiFiIcon(ConnectionState state) {
   if (wifiIcon == NULL) return;
-  lv_label_set_text(wifiIcon, connected ? LV_SYMBOL_WIFI : LV_SYMBOL_WARNING " Offline");
-  if (connected) lv_obj_remove_state(wifiIcon, LV_STATE_USER_1);
+  lv_label_set_text(wifiIcon, state == CONN_OK ? LV_SYMBOL_WIFI
+                            : wifiIconCompact ? LV_SYMBOL_WARNING
+                            : state == CONN_NO_INTERNET ? LV_SYMBOL_WARNING " No internet"
+                                                        : LV_SYMBOL_WARNING " No WiFi");
+  if (state == CONN_OK) lv_obj_remove_state(wifiIcon, LV_STATE_USER_1);
   else lv_obj_add_state(wifiIcon, LV_STATE_USER_1);  // danger color (style below)
+  if (wifiIconCompact) updateHomeClock();             // top row shows the problem
 }
 
 // The new screen is built before the old one is deleted: only forget a
@@ -214,11 +223,12 @@ static void onStatusDeleted(lv_event_t* e) {
   if (obj == statusClock) statusClock = NULL;
 }
 
-lv_obj_t* createWiFiIcon(lv_obj_t* parent) {
+lv_obj_t* createWiFiIcon(lv_obj_t* parent, bool compact = false) {
+  wifiIconCompact = compact;
   wifiIcon = createLabel(parent, "", &stSecondary);
   lv_obj_add_style(wifiIcon, &stDanger, LV_STATE_USER_1);
   lv_obj_add_event_cb(wifiIcon, onStatusDeleted, LV_EVENT_DELETE, NULL);
-  updateWiFiIcon(WiFi.status() == WL_CONNECTED);
+  updateWiFiIcon(connectionState());
   return wifiIcon;
 }
 

@@ -8,3 +8,9 @@ unit_tests/**/secrets.h
 # build output
 build/
 *.bin
+
+# host test binary
+tools/test_lists/test_lists
+tools/test_lists/test_lists.exe
+tools/test_home_layout/test_home_layout
+tools/test_home_layout/test_home_layout.exe

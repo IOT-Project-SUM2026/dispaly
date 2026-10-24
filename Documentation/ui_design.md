@@ -67,7 +67,7 @@ Light mode is all white with outlined cards: a tinted background looked grey on 
 | Screen | Layout |
 |---|---|
 | Home | grey greeting on the top row (WiFi and gear on the right); clock (left, x 12) with the date in blue under it, lined up with the weather card (164, 48, 144 × 68); Lists card (12, 124) and Next event card (164, 124), 144 × 108 |
-| Lists | Shopping / To-do switch in the top bar; 44 px rows with 20 px text; 4 rows visible; tap = tick off |
+| Lists | Shopping / To-do switch in the top bar; 44 px rows with 20 px text; 4 rows visible; tap = tick off; last row "Clear list" (tap twice) |
 | Calendar | events grouped under TODAY / TOMORROW, 36 px rows, 14 px titles; the event that is on now has a blue bar |
 | Weather | city button (pin, name, arrow, blue outline) with "Updated 10:30" next to it; icon, temperature, condition, high / low; 4 forecast cards |
 | World Clock | 2 × 3 tiles: `lv_scale` dial (light by day, dark at night), city, time |

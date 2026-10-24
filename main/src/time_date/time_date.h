@@ -3,6 +3,7 @@
 #include "../../globals.h"
 #include "../../shared_ui.h"
 #include "../storage/storage.h"
+#include "../home/home_layout.h"
 #include <WiFi.h>
 #include <time.h>
 
@@ -51,15 +52,23 @@ void formatLongDate(const struct tm& t, char* buf, size_t len) {
 }
 
 // ============================================================
-// Home clock (big digits, tap: world clock). Labels are updated
-// in place by handleTimeDate(), never rebuilt.
+// Home clock widget (big digits, tap: world clock) and the greeting row
+// above the widgets. Labels are updated in place by handleTimeDate(),
+// never rebuilt. The widget can be any size (home_layout.h):
+//   compact (under 64 px tall): time, date beside it (wide) or under it
+//   normal: time with the date under it (the original look)
+//   big (full width, 72 px or more): 76 px digits, date beside or under
 // ============================================================
 lv_obj_t* clockBox = NULL;       // owns the labels below
 lv_obj_t* clockTimeLabel = NULL;
 lv_obj_t* clockAmPmLabel = NULL;
 lv_obj_t* clockDateLabel = NULL;
-lv_obj_t* clockTopLabel = NULL;   // top row, left of the WiFi icon
+lv_obj_t* clockTopLabel = NULL;   // greeting row, left of the WiFi icon (not part of the widget)
 
+enum ClockMode { CLOCK_NORMAL, CLOCK_COMPACT_STACK, CLOCK_COMPACT_ROW, CLOCK_BIG_ROW, CLOCK_BIG_CENTER };
+static ClockMode clockMode = CLOCK_NORMAL;
+static int clockBoxW = 0, clockBoxH = 0;
+static int clockGrowH = 0;  // greeting off: extra height above the clock's row (home_layout.h)
 
 const char* greetingFor(int hour) {
   if (hour >= 5 && hour < 12) return "Good morning";
@@ -68,78 +77,194 @@ const char* greetingFor(int hour) {
   return "Good night";
 }
 
-// Lines the clock's left edge up with the date and the cards (x 12): each
-// digit has a little empty space before it (from font_display_40.c), so the
-// label moves left by that amount. AM/PM follows the clock's real width.
-// Lines the clock's left edge up with the greeting, the date and the cards
-// (x 12): each digit has a little empty space before it in font_display.c,
-// so the label moves left by that amount. AM/PM follows the clock's width.
-static void alignClock(const char* text) {
-  static const int8_t firstGapPx[10] = {1, 3, 1, 1, 1, 2, 1, 2, 1, 1};  // '0'..'9'
-  int gap = (text[0] >= '0' && text[0] <= '9') ? firstGapPx[text[0] - '0'] : 2;  // '-': 2
-  lv_obj_set_x(clockTimeLabel, MARGIN - 4 - gap);  // the tap box starts at x 4
+// Places the time, AM/PM and date for the widget's size. Left-aligned
+// modes line the digits' left edge up with the cards (x 12): each digit
+// has a little empty space before it in the font, so the label moves left
+// by that amount. Called whenever the text changes (widths change).
+static bool clockMidFont = false;  // time drawn with font_display_mid (56 px)
+static bool clockTall = false;     // half width with the greeting row's space: two-line date
+
+static void placeClock(const char* text) {
+  static const int8_t firstGapPx[10] = {1, 3, 1, 1, 1, 2, 1, 2, 1, 1};  // '0'..'9' at 38 px
+  bool big = clockMode == CLOCK_BIG_ROW || clockMode == CLOCK_BIG_CENTER;
+  int gap = (text[0] >= '0' && text[0] <= '9') ? firstGapPx[text[0] - '0'] : 2;
+  if (big) gap *= 2;
+  else if (clockMidFont) gap = gap * 3 / 2;  // 56 px digits
   lv_obj_update_layout(clockTimeLabel);
-  lv_obj_align_to(clockAmPmLabel, clockTimeLabel, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, -3);
+  lv_obj_update_layout(clockDateLabel);
+  int timeH = lv_obj_get_height(clockTimeLabel), dateH = lv_obj_get_height(clockDateLabel);
+  int timeW = lv_obj_get_width(clockTimeLabel);
+  lv_obj_update_layout(clockAmPmLabel);
+  int ampmW = lv_label_get_text(clockAmPmLabel)[0] ? lv_obj_get_width(clockAmPmLabel) + 6 : 0;
+  const int left = 8;  // the box starts 8 px left of the widget, for a bigger tap area
+
+  switch (clockMode) {
+    case CLOCK_NORMAL: {  // half width: 56 px digits (font_display_mid), date under them
+      // In the 45 px label the digits are drawn from y 4 to 44; the date starts 4 px below them.
+      const int digitTop = 4, dateY = 48;
+      // the date never reaches the widget beside it: a long one gets a smaller font
+      if (lv_obj_get_width(clockDateLabel) > clockBoxW - left) {
+        lv_obj_set_style_text_font(clockDateLabel, &lv_font_montserrat_12, 0);
+        lv_obj_update_layout(clockDateLabel);
+        dateH = lv_obj_get_height(clockDateLabel);
+      }
+      int top;
+      if (clockGrowH > 0) {
+        // greeting off: the clock also has the space above its row. The date
+        // (two lines, "Monday" / "19 Oct", when there is room) ends where the
+        // widget beside it ends, and the digits go up into the free space.
+        top = max(0, clockBoxH - dateH - dateY);
+      } else {
+        // centered in its row, so it lines up with the widget beside it
+        int visualH = dateY - digitTop + dateH;
+        top = 4 + (clockBoxH - 4 - visualH) / 2 - digitTop;
+      }
+      lv_obj_set_pos(clockTimeLabel, left - gap, top);
+      lv_obj_set_pos(clockDateLabel, left, top + dateY);
+      break;
+    }
+    case CLOCK_COMPACT_STACK: {  // narrow and low: smaller time, small date right under it
+      int top = 4 + (clockBoxH - 4 - timeH - dateH + 6) / 2;
+      lv_obj_set_pos(clockTimeLabel, left - 1, top);
+      lv_obj_set_pos(clockDateLabel, left, top + timeH - 6);
+      break;
+    }
+    case CLOCK_COMPACT_ROW:  // wide and low: time on the left, date on the right
+    case CLOCK_BIG_ROW: {
+      int mid = 4 + (clockBoxH - 4) / 2;
+      lv_obj_set_pos(clockTimeLabel, left - gap, mid - timeH / 2);
+      lv_obj_set_pos(clockDateLabel, clockBoxW - lv_obj_get_width(clockDateLabel), mid - dateH / 2);
+      break;
+    }
+    case CLOCK_BIG_CENTER: {  // big digits in the middle, date under them
+      const int space = 14;  // the digits reach a little below the font's line
+      int groupH = timeH + space + dateH;
+      int top = 4 + (clockBoxH - 4 - groupH) / 2;
+      lv_obj_set_pos(clockTimeLabel, left + (clockBoxW - left - timeW - ampmW) / 2, top);
+      lv_obj_set_pos(clockDateLabel, left + (clockBoxW - left - lv_obj_get_width(clockDateLabel)) / 2, top + timeH + space);
+      break;
+    }
+  }
+  lv_obj_update_layout(clockTimeLabel);
+  lv_obj_update_layout(clockDateLabel);
+  if (clockMode == CLOCK_NORMAL && lv_obj_get_x(clockTimeLabel) + timeW + ampmW > clockBoxW) {
+    // "12:45 PM" is wider than half the screen: AM/PM goes at the end of the date line
+    lv_obj_align_to(clockAmPmLabel, clockDateLabel, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+  } else {
+    lv_obj_align_to(clockAmPmLabel, clockTimeLabel, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, big ? -8 : -3);
+  }
+}
+
+// Greeting row of Home: the greeting (unless turned off in Settings > Home
+// screen), or the connection problem in red ("No internet" / "No
+// WiFi"), which is always shown so it is the first thing seen (the top-right
+// icon then only shows a red warning sign).
+static void setHomeTopRow(const char* greeting) {
+  if (clockTopLabel == NULL) return;
+  ConnectionState conn = connectionState();
+  if (!homeGreetingShown) {  // the WiFi icon shows problems itself (home.h)
+    setLabelIfChanged(clockTopLabel, "");
+    return;
+  }
+  const char* text = conn == CONN_NO_INTERNET ? LV_SYMBOL_WARNING " No internet"
+                   : conn == CONN_OFFLINE     ? LV_SYMBOL_WARNING " No WiFi"
+                                              : greeting;
+  setLabelIfChanged(clockTopLabel, text);
+  if (conn == CONN_OK) lv_obj_remove_state(clockTopLabel, LV_STATE_USER_1);
+  else lv_obj_add_state(clockTopLabel, LV_STATE_USER_1);
 }
 
 void updateHomeClock() {
-  if (clockTimeLabel == NULL) return;
-
   if (!timeSynced()) {
+    setHomeTopRow("Hello");
+    if (clockTimeLabel == NULL) return;
     setLabelIfChanged(clockTimeLabel, "--:--");
     setLabelIfChanged(clockAmPmLabel, "");
-    alignClock("--:--");
     const char* waiting = WiFi.status() == WL_CONNECTED ? "Getting the time..." : "Waiting for WiFi";
-    setLabelIfChanged(clockTopLabel, "Hello");
     setLabelIfChanged(clockDateLabel, waiting);
+    placeClock("--:--");
     return;
   }
 
   struct tm t;
   time_t now = time(NULL);
   localtime_r(&now, &t);
+  setHomeTopRow(greetingFor(t.tm_hour));
+  if (clockTimeLabel == NULL) return;  // clock widget hidden
 
   char timeBuf[8], ampmBuf[4], dateBuf[24];
   formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
-  formatLongDate(t, dateBuf, sizeof(dateBuf));
+  if (clockMode == CLOCK_COMPACT_STACK) formatDate(t, dateBuf, sizeof(dateBuf));  // short: "Mon, 19 Oct"
+  else formatLongDate(t, dateBuf, sizeof(dateBuf));
+  if (clockTall) {  // "Monday" and "19 Oct" on two lines
+    char* space = strchr(dateBuf, ' ');
+    if (space) *space = '\n';
+  }
   bool changed = setLabelIfChanged(clockTimeLabel, timeBuf);
   changed |= setLabelIfChanged(clockAmPmLabel, ampmBuf);
   changed |= setLabelIfChanged(clockDateLabel, dateBuf);
-  if (changed) alignClock(timeBuf);
-  setLabelIfChanged(clockTopLabel, greetingFor(t.tm_hour));
-  setLabelIfChanged(clockDateLabel, dateBuf);
+  if (changed) placeClock(timeBuf);
 }
 
 // The new Home screen is built before the old one is deleted, so only
-// clear the labels if the deleted box is the one that owns them
+// clear the labels if the deleted object is the one that owns them
 void onHomeClockDeleted(lv_event_t* e) {
   if (lv_event_get_target(e) != clockBox) return;
-  clockBox = clockTimeLabel = clockAmPmLabel = clockDateLabel = clockTopLabel = NULL;
+  clockBox = clockTimeLabel = clockAmPmLabel = clockDateLabel = NULL;
 }
 
-// Left half of the top of Home: x 4..160, y 4..116 (tap area), text starts at x 12
-void createHomeClock(lv_obj_t* parent, lv_event_cb_t onClick) {
-  lv_obj_t* box = createCard(parent, 4, 4, COL_W + 12, 108, onClick, &stFlat);
+void onHomeTopRowDeleted(lv_event_t* e) {
+  if (lv_event_get_target(e) == clockTopLabel) clockTopLabel = NULL;
+}
+
+// Greeting row (always on Home, even when the clock widget is hidden)
+void createHomeTopRow(lv_obj_t* parent) {
+  clockTopLabel = createLabel(parent, "", &stTitle);
+  passClicks(clockTopLabel);
+  lv_obj_add_style(clockTopLabel, &stSecondary, 0);
+  lv_obj_set_style_text_font(clockTopLabel, &font_hebrew_20, 0);  // grey, still 20 px
+  lv_obj_add_style(clockTopLabel, &stDanger, LV_STATE_USER_1);     // red for a connection problem
+  lv_obj_set_style_text_font(clockTopLabel, &font_hebrew_20, LV_STATE_USER_1);
+  lv_obj_set_width(clockTopLabel, 220);
+  lv_obj_set_pos(clockTopLabel, MARGIN, 11);
+  lv_obj_add_event_cb(clockTopLabel, onHomeTopRowDeleted, LV_EVENT_DELETE, NULL);
+}
+
+// The clock widget at x, y, w, h (screen coordinates of the widget's area).
+// The tap box reaches 8 px further left and 4 px higher, into the margin.
+void createHomeClock(lv_obj_t* parent, int x, int y, int w, int h, lv_event_cb_t onClick) {
+  clockBoxW = w + 8;
+  clockBoxH = h + 4;
+  clockGrowH = y < HOME_AREA_Y ? HOME_AREA_Y - y : 0;
+  lv_obj_t* box = createCard(parent, x - 8, y - 4, clockBoxW, clockBoxH, onClick, &stFlat);
   lv_obj_set_style_radius(box, 12, 0);  // shape of the pressed highlight
   lv_obj_add_event_cb(box, onHomeClockDeleted, LV_EVENT_DELETE, NULL);
   clockBox = box;
 
-  // Greeting on the top row; clock and date as one group next to the weather card.
-  // Hierarchy: the clock is the brightest thing; the greeting is a quieter
-  // grey heading; the date sits right under the clock in the accent color
-  clockTopLabel = createLabel(box, "", &stTitle);
-  lv_obj_add_style(clockTopLabel, &stSecondary, 0);
-  lv_obj_set_style_text_font(clockTopLabel, &font_hebrew_20, 0);  // grey, still 20 px
-  lv_obj_set_pos(clockTopLabel, 8, 7);
-  // clock and date 8 px apart; the date sits on the same line as the city name
-  const int digitsY = 52 - 3;  // the digits start 3 px below the label's top
+  bool full = w >= HOME_AREA_W;
+  clockMode = full && h >= 100 ? CLOCK_BIG_CENTER
+            : full && h >= 72  ? CLOCK_BIG_ROW
+            : full             ? CLOCK_COMPACT_ROW  // time left, date right: the whole row is used
+            : h < 64           ? CLOCK_COMPACT_STACK
+                               : CLOCK_NORMAL;
+  bool big = clockMode == CLOCK_BIG_ROW || clockMode == CLOCK_BIG_CENTER;
+  // 56 px digits wherever they fit, so the clock fills its space
+  clockMidFont = clockMode == CLOCK_NORMAL || (clockMode == CLOCK_COMPACT_ROW && h >= 60);
+  // greeting off and enough height for digits + a two-line 20 px date (48 + 46 px)
+  clockTall = clockMode == CLOCK_NORMAL && clockGrowH > 0 && clockBoxH >= 100;
+
+  // Hierarchy: the clock is the brightest thing; the date is in the accent color
   clockDateLabel = createLabel(box, "", &stAccent);
-  lv_obj_set_pos(clockDateLabel, 8, 87);
-  clockTimeLabel = createLabel(box, "--:--", &stDisplay);
-  lv_obj_set_pos(clockTimeLabel, 8, digitsY);
-  clockAmPmLabel = createLabel(box, "", &stSmall);  // 12-hour clock only
+  if (clockMode == CLOCK_COMPACT_STACK) lv_obj_set_style_text_font(clockDateLabel, &lv_font_montserrat_12, 0);  // fits under the time
+  if (clockTall) lv_obj_set_style_text_font(clockDateLabel, &lv_font_montserrat_20, 0);  // two short lines fit at 20 px
+  // compact and narrow: Montserrat 28 digits, so the date fits under them
+  clockTimeLabel = createLabel(box, "--:--", big                            ? &stDisplayBig
+                                           : clockMidFont                    ? &stDisplayMid
+                                           : clockMode == CLOCK_COMPACT_STACK ? &stValue
+                                                                              : &stDisplay);
+  clockAmPmLabel = createLabel(box, "", big ? &stSecondary : &stSmall);  // 12-hour clock only
   updateHomeClock();
-  alignClock(lv_label_get_text(clockTimeLabel));
+  placeClock(lv_label_get_text(clockTimeLabel));
 }
 
 // Small clock in the header of the other screens (shared_ui.h)
@@ -263,10 +388,16 @@ static void setDial(int i, int minutes) {
   lv_scale_set_line_needle_value(dial, worldMinuteHands[i], r * 72 / 100, minutes % 60);
 }
 
-void updateWorldClock() {
+void updateWorldClock(bool force = false) {
   if (worldList == NULL) return;
   bool synced = timeSynced();
   time_t now = time(NULL);
+  // the dials and times only change once a minute: switching the time zone
+  // 12 times a second costs memory and confuses the other tasks' clocks
+  static long lastMinute = -1;
+  long minute = synced ? (long)(now / 60) : -1;
+  if (!force && minute == lastMinute) return;
+  lastMinute = minute;
   for (int i = 0; i < WORLD_CITY_COUNT; i++) {
     if (!synced) {
       setLabelIfChanged(worldTimeLabels[i], "--:--");
@@ -308,7 +439,7 @@ lv_obj_t* buildTimeScreen(lv_event_cb_t onBack) {
     worldTimeLabels[i] = createLabel(tile, "", &stTitle);
     lv_obj_set_pos(worldTimeLabels[i], 52, 26);
   }
-  updateWorldClock();
+  updateWorldClock(true);
   return scr;
 }
 

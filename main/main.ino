@@ -1,4 +1,7 @@
 #include "globals.h"
+#include "src/health/health.h"
+#include "src/config/config.h"
+#include "src/net/net.h"
 #include "src/storage/storage.h"
 #include "src/theme/theme.h"
 #include "src/wifi/wifi_setup.h"
@@ -19,21 +22,30 @@
 void setup() {
   Serial.begin(115200);
   Serial.println("[Boot] Smart Display starting");
+  initHealth();   // logs why the board last restarted
+  initConfig();   // Firebase login and calendar (setup page, or secrets.h)
 
   // load saved settings before the first screen is drawn
   initStorage();
   initTheme();
+  initHomeLayout();  // which Home widgets are shown, which one is big
   initLists();
   initWeather();
+  loadSavedWeather();  // last weather from flash, until the first download
+  initCalendar();
   initTimeDate();
   initIdle();
+  initSettings();  // which Settings sections are folded
 
   initDisplay();  // loads brightness, shows the home screen
   connectWiFi();
   startFirebase();
+  startWatchdog();  // restarts the board if loop() ever freezes
 }
 
 void loop() {
+  handleHealth();     // feeds the watchdog, health line in the log every 10 min
+  listsCheckTime();   // retries a failed flash write, fixes offline tap times once the clock syncs
   handleWiFi();
   handleConnectionStatus();
   handleTimeDate();

@@ -7,6 +7,8 @@
 #include <NetworkClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "../net/net.h"
+#include "../home/home_layout.h"
 
 #define FORECAST_DAYS 4
 
@@ -58,6 +60,11 @@ struct CityWeather {
 };
 CityWeather cityWeather[WEATHER_CITY_COUNT];
 
+// Filled by the background download (net task), copied into cityWeather by
+// handleWeather() in loop(): the screens never read data that is half written.
+static CityWeather weatherDownloaded[WEATHER_CITY_COUNT];
+static int weatherDownloadedCount = 0;
+
 // weather_code (Open-Meteo, WMO codes) -> icon
 uint8_t iconForCode(int code) {
   if (code == 0) return ICON_SUN;
@@ -101,9 +108,98 @@ void showCityWeather() {
   for (int i = 0; i < FORECAST_DAYS; i++) forecast[i] = w.days[i];
 }
 
+// ---------- saved in flash, so the last weather shows after a restart without internet ----------
+#define WEATHER_SAVE_MS  3600000UL  // at most once an hour (flash wear)
+#define WEATHER_STALE_S  1800       // older than 30 min: the time is shown in red
+#define WEATHER_SAVE_VERSION 1
+
+struct SavedWeather {  // plain bytes (no String), for Preferences::putBytes
+  uint8_t version;
+  uint32_t updatedAt;
+  struct {
+    uint8_t loaded, icon;
+    int16_t temp, code;
+    struct { char day[6]; uint8_t icon; int8_t high, low; } days[FORECAST_DAYS];
+  } cities[WEATHER_CITY_COUNT];
+};
+
+static void saveWeather() {
+  static unsigned long lastSave = 0;
+  static bool savedOnce = false;
+  if (savedOnce && millis() - lastSave < WEATHER_SAVE_MS) return;
+  SavedWeather* s = (SavedWeather*)calloc(1, sizeof(SavedWeather));
+  if (!s) return;
+  s->version = WEATHER_SAVE_VERSION;
+  s->updatedAt = (uint32_t)weatherUpdatedAt;
+  for (int c = 0; c < WEATHER_CITY_COUNT; c++) {
+    const CityWeather& w = cityWeather[c];
+    s->cities[c].loaded = w.loaded;
+    s->cities[c].icon = w.icon;
+    s->cities[c].temp = w.temp;
+    s->cities[c].code = w.code;
+    for (int i = 0; i < FORECAST_DAYS; i++) {
+      strncpy(s->cities[c].days[i].day, w.days[i].day.c_str(), 5);
+      s->cities[c].days[i].icon = w.days[i].icon;
+      s->cities[c].days[i].high = constrain(w.days[i].high, -99, 99);
+      s->cities[c].days[i].low = constrain(w.days[i].low, -99, 99);
+    }
+  }
+  Preferences p;
+  if (p.begin("weather", false)) {
+    if (p.putBytes("data", s, sizeof(SavedWeather)) == sizeof(SavedWeather)) {
+      savedOnce = true;
+      lastSave = millis();
+    }
+    p.end();
+  }
+  free(s);
+}
+
+// Call once in setup(), after initWeather()
+void loadSavedWeather() {
+  Preferences p;
+  if (!p.begin("weather", true)) return;  // never saved
+  SavedWeather* s = (SavedWeather*)calloc(1, sizeof(SavedWeather));
+  bool ok = s && p.getBytesLength("data") == sizeof(SavedWeather) &&
+            p.getBytes("data", s, sizeof(SavedWeather)) == sizeof(SavedWeather) && s->version == WEATHER_SAVE_VERSION;
+  p.end();
+  if (ok) {
+    for (int c = 0; c < WEATHER_CITY_COUNT; c++) {
+      CityWeather& w = cityWeather[c];
+      w.loaded = s->cities[c].loaded;
+      w.icon = s->cities[c].icon;
+      w.temp = s->cities[c].temp;
+      w.code = s->cities[c].code;
+      for (int i = 0; i < FORECAST_DAYS; i++) {
+        s->cities[c].days[i].day[5] = '\0';
+        w.days[i].day = s->cities[c].days[i].day;
+        w.days[i].icon = s->cities[c].days[i].icon;
+        w.days[i].high = s->cities[c].days[i].high;
+        w.days[i].low = s->cities[c].days[i].low;
+      }
+    }
+    weatherUpdatedAt = s->updatedAt;
+    showCityWeather();
+    Serial.println("[Weather] Last saved weather loaded (shown until the next download)");
+  }
+  free(s);
+}
+
+// True when the weather on screen is older than 30 min (or its age is unknown)
+bool weatherStale() {
+  if (!weatherLoaded) return false;
+  if (weatherUpdatedAt == 0 || !timeSynced()) return true;
+  return time(NULL) - weatherUpdatedAt > WEATHER_STALE_S;
+}
+
 // Reads one city from Open-Meteo's reply
 static bool parseCityWeather(JsonObject src, CityWeather& w) {
   if (src["current_weather"].isNull() || src["daily"].isNull()) return false;
+  // a reply without real numbers is skipped, never shown as 0 degrees
+  if (!src["current_weather"]["temperature"].is<float>()) return false;
+  for (int i = 0; i < FORECAST_DAYS; i++) {
+    if (!src["daily"]["temperature_2m_max"][i].is<float>() || !src["daily"]["temperature_2m_min"][i].is<float>()) return false;
+  }
   w.temp = (int)round((float)src["current_weather"]["temperature"]);
   w.code = src["current_weather"]["weathercode"] | 0;
   w.icon = iconForCode(w.code);
@@ -114,6 +210,7 @@ static bool parseCityWeather(JsonObject src, CityWeather& w) {
     d.icon = iconForCode(src["daily"]["weathercode"][i] | 0);
     // weekday from the API's own date ("YYYY-MM-DD"), so it always matches reality
     const char* date = src["daily"]["time"][i] | "2000-01-01";
+    if (strlen(date) < 10) date = "2000-01-01";  // too short to read the day from
     int y = atoi(date), mo = atoi(date + 5), da = atoi(date + 8);
     d.day = (i == 0) ? "TODAY" : String(weekdayNames[dayOfWeek(y, mo, da)]);
   }
@@ -124,17 +221,13 @@ static bool parseCityWeather(JsonObject src, CityWeather& w) {
 // Downloads the weather of ALL cities in one request (one slow secure
 // handshake instead of one per city). The connection is closed afterwards:
 // the next request is 10 minutes later, so keeping it open would only hold memory.
+// Runs in the background (net task, core 0): fills weatherDownloaded only.
 // Returns true when new data was loaded.
-bool fetchWeather() {
+bool downloadWeather() {
   static NetworkClientSecure client;
   static HTTPClient http;
-  static bool clientReady = false;
-  if (!clientReady) {
-    client.setInsecure();           // encrypted, certificate not checked
-    client.setHandshakeTimeout(8);  // seconds (default 120 would freeze the screen if WiFi drops)
-    http.setReuse(false);           // close after each request (we only fetch every 10 min)
-    clientReady = true;
-  }
+  setupSecureClient(client, 8);   // handshake limit 8 s (default 120)
+  http.setReuse(false);           // close after each request (we only fetch every 10 min)
 
   // latitude=31.77,32.08,...&longitude=35.21,34.78,... -> one answer per city
   String lats, lons;
@@ -160,6 +253,8 @@ bool fetchWeather() {
   int httpCode = http.GET();
   String payload = httpCode == 200 ? http.getString() : String();
   http.end();
+  netReport(httpCode);
+  netLogFailure("Weather", client, httpCode);
 
   if (httpCode != 200) {
     Serial.printf("[Weather] HTTP error: %d (after %lu ms)\n", httpCode, millis() - start);
@@ -181,46 +276,196 @@ bool fetchWeather() {
 
   // several cities -> a list; one city -> a single object
   int updatedCount = 0;
+  for (int i = 0; i < WEATHER_CITY_COUNT; i++) weatherDownloaded[i].loaded = false;
   if (doc.is<JsonArray>()) {
     JsonArray all = doc.as<JsonArray>();
     for (int i = 0; i < WEATHER_CITY_COUNT && i < (int)all.size(); i++) {
-      if (parseCityWeather(all[i], cityWeather[i])) updatedCount++;
+      if (parseCityWeather(all[i], weatherDownloaded[i])) updatedCount++;
     }
-  } else if (parseCityWeather(doc.as<JsonObject>(), cityWeather[0])) {
+  } else if (parseCityWeather(doc.as<JsonObject>(), weatherDownloaded[0])) {
     updatedCount = 1;
   }
+  weatherDownloadedCount = updatedCount;
   if (updatedCount == 0) {
     Serial.println("[Weather] Reply had no weather data");
     return false;
   }
-  showCityWeather();
-  weatherUpdatedAt = timeSynced() ? time(NULL) : 0;
-  Serial.printf("[Weather] Updated %d cities in %lu ms\n", updatedCount, millis() - start);
+  Serial.printf("[Weather] Downloaded %d cities in %lu ms\n", updatedCount, millis() - start);
   return true;
 }
 
+static BgJob weatherJob = {"weather", downloadWeather, BG_IDLE, false};
+
+// "11:20", or "Mon 11:20" when it isn't from today
+static void weatherTimeText(char* out, size_t size) {
+  if (weatherUpdatedAt == 0) { snprintf(out, size, "earlier"); return; }
+  struct tm t, today;
+  localtime_r(&weatherUpdatedAt, &t);
+  time_t now = time(NULL);
+  localtime_r(&now, &today);
+  char timeBuf[8], ampmBuf[4], day[6] = "";
+  formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
+  if (t.tm_yday != today.tm_yday || t.tm_year != today.tm_year) strftime(day, sizeof(day), "%a ", &t);
+  snprintf(out, size, "%s%s%s%s", day, timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
+}
+
+// "Updated 11:20" (Weather screen)
+static void weatherUpdatedText(char* out, size_t size) {
+  if (weatherUpdatedAt == 0) { out[0] = '\0'; return; }
+  char when[16];
+  weatherTimeText(when, sizeof(when));
+  snprintf(out, size, "Updated %s", when);
+}
+
+// "From 11:20" (Home widget, when the weather is old)
+static void weatherFromText(char* out, size_t size) {
+  char when[16];
+  weatherTimeText(when, sizeof(when));
+  snprintf(out, size, "From %s", when);
+}
+
 // ============================================================
-// Home weather card (top right of Home; tap: Weather screen)
+// Home weather widget (tap: Weather screen). Any size (home_layout.h):
+//   compact (under 64 px): icon, temperature, city (+ condition, high/low when wide)
+//   normal: icon, temperature, city (the original card); wide: + 3-day forecast
+//   large (100 px or more): + condition and high/low; forecast days below
 // ============================================================
+
+// One forecast day as a small column: "TUE", icon, "28°" (and the low when there is room)
+static void createForecastMini(lv_obj_t* parent, const ForecastDay& d, int x, int y, int w, int iconSize, bool showLow) {
+  lv_obj_t* day = createCaption(parent, d.day.c_str());
+  lv_obj_set_width(day, w);
+  lv_obj_set_style_text_align(day, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(day, x, y);
+  lv_obj_t* icon = createWeatherIcon(parent, (WeatherIcon)d.icon, iconSize);
+  lv_obj_set_pos(icon, x + (w - iconSize) / 2, y + 16);
+  char text[16];
+  if (showLow) snprintf(text, sizeof(text), "%d\xC2\xB0 %d\xC2\xB0", d.high, d.low);
+  else snprintf(text, sizeof(text), "%d\xC2\xB0", d.high);
+  lv_obj_t* temps = createLabel(parent, text, &stSecondary);
+  lv_obj_set_width(temps, w);
+  lv_obj_set_style_text_align(temps, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(temps, x, y + 18 + iconSize);
+}
+
 lv_obj_t* createHomeWeatherCard(lv_obj_t* parent, int x, int y, int w, int h, lv_event_cb_t onClick) {
   lv_obj_t* card = createCard(parent, x, y, w, h, onClick);
+  bool wide = w >= HOME_AREA_W, compact = h < 64, large = h >= 100;
 
   if (!weatherLoaded) {
-    bool online = WiFi.status() == WL_CONNECTED;
-    lv_obj_t* title = createLabel(card, online ? "Loading..." : "No WiFi", online ? &stSecondary : &stDanger);
-    lv_obj_set_pos(title, 12, 12);
-    lv_obj_t* hint = createLabel(card, online ? "Weather" : "Join the WiFi network\nSmartDisplay-Setup", &stSmall);
-    lv_obj_set_pos(hint, 12, 32);
+    ConnectionState conn = connectionState();
+    bool online = conn == CONN_OK;
+    lv_obj_t* title = createLabel(card, online ? "Loading..." : conn == CONN_NO_INTERNET ? "No internet" : "No WiFi",
+                                  online ? &stSecondary : &stDanger);
+    const char* hintText = online ? "Weather" : conn == CONN_NO_INTERNET ? "Check the router" : "WiFi setup:\nSettings > Device";
+    if (compact) {  // one line
+      lv_obj_align(title, LV_ALIGN_LEFT_MID, 12, 0);
+      if (wide) {
+        lv_obj_t* hint = createLabel(card, online ? "Weather" : conn == CONN_NO_INTERNET ? "Check the router" : "Join SmartDisplay-Setup", &stSmall);
+        lv_obj_align(hint, LV_ALIGN_RIGHT_MID, -12, 0);
+      }
+      return card;
+    }
+    int top = (h - 52) / 2;
+    lv_obj_set_pos(title, 12, top);
+    lv_obj_t* hint = createLabel(card, hintText, &stSmall);
+    lv_obj_set_pos(hint, 12, top + 20);
     return card;
   }
 
+  char text[40];
+  if (compact) {  // icon, temperature and city on one line
+    lv_obj_t* icon = createWeatherIcon(card, (WeatherIcon)currentIcon, 32);
+    lv_obj_set_pos(icon, 8, (h - 32) / 2);
+    lv_obj_t* temp = createLabel(card, (String(currentTemp) + "\xC2\xB0").c_str(), &stValue);
+    lv_obj_align(temp, LV_ALIGN_LEFT_MID, 46, 0);
+    lv_obj_update_layout(temp);
+    int cityX = 46 + lv_obj_get_width(temp) + 8;
+    if (wide) snprintf(text, sizeof(text), "%s, %s", weatherCities[selectedCity].name, currentCondition.c_str());
+    else snprintf(text, sizeof(text), "%s", weatherCities[selectedCity].name);
+    lv_obj_t* place = createLabel(card, text, &stSecondary);
+    if (wide) {
+      char hl[24];
+      snprintf(hl, sizeof(hl), "H %d\xC2\xB0  L %d\xC2\xB0", forecast[0].high, forecast[0].low);
+      lv_obj_t* highLow = createLabel(card, hl, &stSecondary);
+      lv_obj_align(highLow, LV_ALIGN_RIGHT_MID, -12, 0);
+      lv_obj_update_layout(highLow);
+      makeSingleLine(place, w - cityX - lv_obj_get_width(highLow) - 24);
+    } else {
+      makeSingleLine(place, w - cityX - 8);
+    }
+    lv_obj_align(place, LV_ALIGN_LEFT_MID, cityX, 0);
+    return card;
+  }
+
+  // the original card: icon, temperature, city (at the top when the card is large)
+  int top = large ? 0 : (h - 68) / 2;
   lv_obj_t* icon = createWeatherIcon(card, (WeatherIcon)currentIcon, 40);
-  lv_obj_set_pos(icon, 10, (h - 40) / 2);
+  lv_obj_set_pos(icon, 10, top + 14);
   lv_obj_t* temp = createLabel(card, (String(currentTemp) + "\xC2\xB0").c_str(), &stValue);
-  lv_obj_set_pos(temp, 58, 9);
-  lv_obj_t* place = createLabel(card, weatherCities[selectedCity].name, &stSecondary);
-  makeSingleLine(place, w - 58 - 8);
-  lv_obj_set_pos(place, 58, 42);
+  lv_obj_set_pos(temp, 58, top + 9);
+  // old weather (no download for 30 min): its time in red instead of the city
+  char placeText[24];
+  if (weatherStale()) weatherFromText(placeText, sizeof(placeText));
+  else snprintf(placeText, sizeof(placeText), "%s", weatherCities[selectedCity].name);
+  lv_obj_t* place = createLabel(card, placeText, weatherStale() ? &stDanger : &stSecondary);
+  makeSingleLine(place, (wide ? 140 : w) - 58 - 8);
+  lv_obj_set_pos(place, 58, top + 42);
+
+  snprintf(text, sizeof(text), "H %d\xC2\xB0  L %d\xC2\xB0", forecast[0].high, forecast[0].low);
+  if (!wide) {
+    if (!large) return card;
+    // narrow and tall: condition and high / low, then the next days as rows
+    lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &stBody);
+    makeSingleLine(condition, w - 24);
+    lv_obj_set_pos(condition, 12, 70);
+    lv_obj_t* highLow = createLabel(card, text, &stSecondary);
+    lv_obj_set_pos(highLow, 12, 90);
+    int rows = min((h - 118) / 22, FORECAST_DAYS - 1);
+    for (int i = 0; i < rows; i++) {
+      const ForecastDay& d = forecast[i + 1];
+      int ry = 118 + i * 22;
+      lv_obj_t* day = createCaption(card, d.day.c_str());
+      lv_obj_set_pos(day, 12, ry + 3);
+      lv_obj_t* dayIcon = createWeatherIcon(card, (WeatherIcon)d.icon, 20);
+      lv_obj_set_pos(dayIcon, 52, ry);
+      char t[16];
+      snprintf(t, sizeof(t), "%d\xC2\xB0 %d\xC2\xB0", d.high, d.low);
+      lv_obj_t* temps = createLabel(card, t, &stSecondary);
+      lv_obj_align(temps, LV_ALIGN_TOP_RIGHT, -12, ry + 1);
+    }
+    return card;
+  }
+
+  if (h < 128) {
+    // wide: the next 3 days on the right
+    const int colW = (w - 150 - 8) / 3;
+    int fy = large ? 10 : (h - 56) / 2;
+    for (int i = 1; i < FORECAST_DAYS; i++) {
+      createForecastMini(card, forecast[i], 150 + (i - 1) * colW, fy, colW, 20, false);
+    }
+    if (large) {  // room for one more line: condition and high / low
+      char line[48];
+      snprintf(line, sizeof(line), "%s   %s", currentCondition.c_str(), text);
+      lv_obj_t* more = createLabel(card, line, &stSecondary);
+      makeSingleLine(more, w - 24);
+      lv_obj_set_pos(more, 12, h - 28);
+    }
+    return card;
+  }
+
+  // wide and large: condition and high / low on the right, 4 days below
+  lv_obj_t* condition = createLabel(card, currentCondition.c_str(), &stBody);
+  makeSingleLine(condition, w - 150 - 12);
+  lv_obj_set_style_text_align(condition, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(condition, LV_ALIGN_TOP_RIGHT, -12, 14);
+  lv_obj_t* highLow = createLabel(card, text, &stSecondary);
+  lv_obj_align(highLow, LV_ALIGN_TOP_RIGHT, -12, 36);
+  if (h >= 128) {
+    const int colW = (w - 24) / FORECAST_DAYS;
+    int fy = 68 + (h - 68 - 62) / 2;
+    for (int i = 0; i < FORECAST_DAYS; i++) createForecastMini(card, forecast[i], 12 + i * colW, fy, colW, 24, true);
+  }
   return card;
 }
 
@@ -233,16 +478,6 @@ lv_obj_t* weatherContent = NULL;
 
 void onWeatherContentDeleted(lv_event_t* e) {
   if (lv_event_get_target(e) == weatherContent) weatherContent = NULL;
-}
-
-// "Updated 11:20"
-static void weatherUpdatedText(char* out, size_t size) {
-  if (weatherUpdatedAt == 0) { out[0] = '\0'; return; }
-  struct tm t;
-  localtime_r(&weatherUpdatedAt, &t);
-  char timeBuf[8], ampmBuf[4];
-  formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
-  snprintf(out, size, "Updated %s%s%s", timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
 }
 
 void createForecastCard(lv_obj_t* parent, const ForecastDay& d, int x, int y, int w, int h) {
@@ -273,15 +508,17 @@ void buildWeatherContent(lv_obj_t* scr) {
   lv_obj_move_to_index(weatherContent, 0);  // behind the header, so the open city list stays on top
 
   if (!weatherLoaded) {
-    if (WiFi.status() == WL_CONNECTED) createMessage(weatherContent, NULL, "Loading weather...", NULL, 110);
-    else createMessage(weatherContent, LV_SYMBOL_WARNING, "No WiFi", "The weather loads when WiFi is back", 110);
+    ConnectionState conn = connectionState();
+    if (conn == CONN_OK) createMessage(weatherContent, NULL, "Loading weather...", NULL, 110);
+    else createMessage(weatherContent, LV_SYMBOL_WARNING, conn == CONN_NO_INTERNET ? "No internet" : "No WiFi",
+                       "The weather loads when the internet is back", 110);
     return;
   }
 
   // "Updated 10:30" next to the city button (red when offline: the data is old)
   char text[32];
   weatherUpdatedText(text, sizeof(text));
-  lv_obj_t* updated = createLabel(weatherContent, text, WiFi.status() == WL_CONNECTED ? &stSmall : &stDanger);
+  lv_obj_t* updated = createLabel(weatherContent, text, connectionState() == CONN_OK && !weatherStale() ? &stSmall : &stDanger);
   lv_obj_align(updated, LV_ALIGN_TOP_RIGHT, -MARGIN, 15);
 
   // current weather: icon, big temperature, condition and high / low
@@ -349,6 +586,7 @@ lv_obj_t* buildWeatherScreen(lv_event_cb_t onBack) {
 
 // Fetches all cities every 10 min (every 30 s until the first success).
 // A failed fetch is retried once right away, then waits for the interval.
+// The download runs in the background, so the screen never freezes.
 // Returns true when the screen should be redrawn: new data arrived,
 // or the city changed (its weather is already saved, so no request).
 bool handleWeather() {
@@ -359,6 +597,32 @@ bool handleWeather() {
     cityChanged = false;
     return true;  // redraw with the saved weather of the new city
   }
+
+  bool ok;
+  if (bgTake(weatherJob, ok)) {  // a download finished
+    if (ok) {
+      for (int i = 0; i < WEATHER_CITY_COUNT; i++) {
+        if (weatherDownloaded[i].loaded) cityWeather[i] = weatherDownloaded[i];
+      }
+      showCityWeather();
+      weatherUpdatedAt = timeSynced() ? time(NULL) : 0;
+      saveWeather();
+      Serial.printf("[Weather] Updated (%s)\n", weatherCities[selectedCity].name);
+      retried = false;
+      return true;
+    }
+    if (!retried) {
+      retried = true;
+      firstAttempt = true;  // one immediate retry on the next pass
+      Serial.println("[Weather] Retrying once");
+    } else {
+      retried = false;
+    }
+    return false;
+  }
+  if (bgBusy(weatherJob)) return false;
+  if (!homeWidgetShown(HW_WEATHER)) return false;  // widget hidden: the feature is off, nothing to download
+
   unsigned long interval = weatherLoaded ? 600000 : 30000;
   if (!firstAttempt && millis() - lastAttempt < interval) return false;
   firstAttempt = false;
@@ -368,15 +632,11 @@ bool handleWeather() {
     Serial.println("[Weather] Skipped - no WiFi");
     return false;
   }
-
-  bool ok = fetchWeather();
-  if (!ok && !retried) {
-    retried = true;
-    firstAttempt = true;  // one immediate retry on the next pass
-    Serial.println("[Weather] Retrying once");
-  } else {
-    retried = false;
+  if (!clockReadyForTls()) {  // right after connecting: the clock isn't set yet
+    firstAttempt = true;      // try again on the next pass
+    return false;
   }
-  return ok;
+  bgRequest(weatherJob);
+  return false;
 }
 #endif

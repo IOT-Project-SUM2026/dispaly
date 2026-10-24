@@ -4,6 +4,7 @@
 #include "../../shared_ui.h"
 #include "../time_date/time_date.h"
 #include "calendar.h"
+#include "../home/home_layout.h"
 
 // ============================================================
 // Calendar screen (upcoming events, grouped by day) and the
@@ -47,15 +48,15 @@ bool calendarStatusText(const char*& title, const char*& hint) {
   hint = nullptr;
   if (calendarState == CALENDAR_NOT_SET_UP) {
     title = "Calendar not set up";
-    hint = "Add the calendar ID and API key\nto secrets.h (see README)";
+    hint = "Add the calendar ID and API key in\nSettings > Device > Setup page";
   } else if (!timeSynced() || calendarState == CALENDAR_LOADING) {
-    bool online = WiFi.status() == WL_CONNECTED;
-    title = online ? "Loading events..." : "No WiFi";
-    hint = online ? nullptr : "Events load when WiFi is back";
+    ConnectionState conn = connectionState();
+    title = conn == CONN_OK ? "Loading events..." : conn == CONN_NO_INTERNET ? "No internet" : "No WiFi";
+    hint = conn == CONN_OK ? nullptr : "Events load when the internet is back";
   } else if (calendarState == CALENDAR_FAILED) {
     title = "Couldn't load events";
-    if (calendarError == 404) hint = "Check CALENDAR_ID, and that\nthe calendar is public";
-    else if (calendarError == 400 || calendarError == 403) hint = "Check CALENDAR_API_KEY";
+    if (calendarError == 404) hint = "Check the calendar ID (Setup page)\nand that the calendar is public";
+    else if (calendarError == 400 || calendarError == 403) hint = "Check the calendar API key\n(Settings > Device > Setup page)";
     else hint = "Trying again every minute";
   } else {
     return false;
@@ -124,15 +125,51 @@ lv_obj_t* buildCalendarScreen(lv_event_cb_t onBack) {
   if (shown == 0) {
     lv_obj_delete(list);
     createMessage(scr, LV_SYMBOL_OK, "No upcoming events", "Your calendar is clear", centerY);
+    return scr;
+  }
+  // when the events were checked: red when older than an hour (e.g. the key stopped working)
+  if (calendarUpdatedAt > 0) {
+    struct tm t;
+    localtime_r(&calendarUpdatedAt, &t);
+    char timeBuf[8], ampmBuf[4], text[40], day[6] = "";
+    formatClock(t, timeBuf, sizeof(timeBuf), ampmBuf, sizeof(ampmBuf));
+    if (dayNumber(t) != today) strftime(day, sizeof(day), "%a ", &t);
+    snprintf(text, sizeof(text), "Updated %s%s%s%s", day, timeBuf, ampmBuf[0] ? " " : "", ampmBuf);
+    lv_obj_t* updated = createLabel(list, text, calendarStale() ? &stDanger : &stSmall);
+    lv_obj_set_style_pad_top(updated, 4, 0);
+    lv_obj_set_style_pad_left(updated, 4, 0);
   }
   return scr;
 }
 
 // ============================================================
-// Home screen card: the next event
+// Home "Next event" widget (tap: Calendar screen). Any size (home_layout.h):
+//   compact (under 64 px): when + title on two short lines
+//   normal: NEXT / NOW, when, title (the original card)
+//   wide: UPCOMING, one event per line (as many as fit)
 // ============================================================
+
+// "Today 18:00", "Tomorrow", "Until 15:30" (an event that is on now)
+static void eventWhenText(const CalendarEvent& e, time_t now, long today, char* out, size_t size) {
+  char day[20], timeText[12];
+  calendarDayLabel(max(e.startDay, today), today, day, sizeof(day));
+  calendarTimeLabel(e, now, timeText, sizeof(timeText));
+  if (!e.allDay && e.start <= now) {
+    struct tm end;
+    localtime_r(&e.end, &end);
+    char endText[8], ampm[4];
+    formatClock(end, endText, sizeof(endText), ampm, sizeof(ampm));
+    snprintf(out, size, "Until %s%s%s", endText, ampm[0] ? " " : "", ampm);
+  } else if (e.allDay) {
+    snprintf(out, size, "%s", day);
+  } else {
+    snprintf(out, size, "%s %s", day, timeText);
+  }
+}
+
 lv_obj_t* createHomeCalendarCard(lv_obj_t* parent, int x, int y, int w, int h, lv_event_cb_t onClick) {
   lv_obj_t* card = createCard(parent, x, y, w, h, onClick);
+  bool wide = w >= HOME_AREA_W, compact = h < 64;
   const char* message;
   const char* hint;
   bool hasEvents = !calendarStatusText(message, hint);
@@ -141,52 +178,85 @@ lv_obj_t* createHomeCalendarCard(lv_obj_t* parent, int x, int y, int w, int h, l
   struct tm local;
   localtime_r(&now, &local);
   long today = dayNumber(local);
-  const CalendarEvent* next = nullptr;
-  int laterToday = 0;
+  const CalendarEvent* upcoming[CALENDAR_MAX_EVENTS];
+  int count = 0, laterToday = 0;
   for (int i = 0; hasEvents && i < calendarEventCount; i++) {
     const CalendarEvent& e = calendarEvents[i];
     if (calendarEventOver(e, now, today)) continue;
-    if (!next) next = &e;
-    else if (max(e.startDay, today) == today) laterToday++;
+    if (count > 0 && max(e.startDay, today) == today) laterToday++;
+    upcoming[count++] = &e;
   }
+  const CalendarEvent* next = count > 0 ? upcoming[0] : nullptr;
   bool isNow = next && !next->allDay && next->start <= now;
 
-  lv_obj_t* title = createCaption(card, isNow ? LV_SYMBOL_BELL "  NOW" : LV_SYMBOL_BELL "  NEXT");
-  lv_obj_set_pos(title, 12, 10);
-
-  if (!hasEvents || !next) {
+  // no events to show: "Not set up", "Can't load", "No events"...
+  if (!next) {
     const char* text = !hasEvents ? (calendarState == CALENDAR_NOT_SET_UP ? "Not set up"
                                      : calendarState == CALENDAR_FAILED   ? "Can't load"
                                      : WiFi.status() != WL_CONNECTED      ? "No WiFi"
                                                                           : "Loading...")
                                   : "No events";
+    if (compact) {
+      lv_obj_t* label = createLabel(card, LV_SYMBOL_BELL "  ", &stCaption);
+      lv_obj_align(label, LV_ALIGN_LEFT_MID, 12, 0);
+      lv_obj_t* value = createLabel(card, text, &stSecondary);
+      lv_obj_align(value, LV_ALIGN_LEFT_MID, 34, 0);
+      return card;
+    }
+    lv_obj_t* title = createCaption(card, LV_SYMBOL_BELL "  NEXT");
+    lv_obj_set_pos(title, 12, 10);
     lv_obj_t* label = createLabel(card, text, &stSecondary);
     lv_obj_set_pos(label, 12, 34);
     return card;
   }
 
-  // "Today 18:00" / "Tomorrow" / "Now", then the title on up to 2 lines
-  char day[20], timeText[12], when[36], titleText[CALENDAR_TITLE_LEN];
-  calendarDayLabel(max(next->startDay, today), today, day, sizeof(day));
-  calendarTimeLabel(*next, now, timeText, sizeof(timeText));
-  if (isNow) {
-    struct tm end;
-    localtime_r(&next->end, &end);
-    char endText[8], ampm[4];
-    formatClock(end, endText, sizeof(endText), ampm, sizeof(ampm));
-    snprintf(when, sizeof(when), "Until %s%s%s", endText, ampm[0] ? " " : "", ampm);
+  char when[36], titleText[CALENDAR_TITLE_LEN];
+  if (compact) {  // when (accent) over the title
+    eventWhenText(*next, now, today, when, sizeof(when));
+    lv_obj_t* whenLabel = createLabel(card, when, &stAccent);
+    lv_obj_set_pos(whenLabel, 12, h / 2 - 20);
+    toScreenText(next->title, titleText, sizeof(titleText));
+    lv_obj_t* titleLabel = createLabel(card, titleText, &stBody);
+    makeSingleLine(titleLabel, w - 24);
+    lv_obj_set_pos(titleLabel, 12, h / 2);
+    return card;
   }
-  else if (next->allDay) snprintf(when, sizeof(when), "%s", day);
-  else snprintf(when, sizeof(when), "%s %s", day, timeText);
+
+  if (wide) {  // one event per line: "Today 18:00   Team meeting"
+    int firstY = 32;
+    if (h >= 100) {
+      lv_obj_t* title = createCaption(card, isNow ? LV_SYMBOL_BELL "  NOW AND NEXT" : LV_SYMBOL_BELL "  UPCOMING");
+      lv_obj_set_pos(title, 12, 10);
+    }
+    int rows = max(1, (h - (h >= 100 ? 36 : 12)) / 22);
+    if (h < 100) firstY = (h - min(rows, count) * 22) / 2 + 2;  // no caption: rows centered
+    const int whenW = 140;
+    for (int i = 0; i < count && i < rows; i++) {
+      int ry = firstY + i * 22;
+      eventWhenText(*upcoming[i], now, today, when, sizeof(when));
+      lv_obj_t* whenLabel = createLabel(card, when, &stAccent);
+      makeSingleLine(whenLabel, whenW - 8);
+      lv_obj_set_pos(whenLabel, 12, ry);
+      toScreenText(upcoming[i]->title, titleText, sizeof(titleText));
+      lv_obj_t* titleLabel = createLabel(card, titleText, &stBody);
+      makeSingleLine(titleLabel, w - 24 - whenW);
+      lv_obj_set_pos(titleLabel, 12 + whenW, ry);
+    }
+    return card;
+  }
+
+  // the original card: NEXT / NOW, when, the title on up to 2 lines, "+2 more today"
+  lv_obj_t* title = createCaption(card, isNow ? LV_SYMBOL_BELL "  NOW" : LV_SYMBOL_BELL "  NEXT");
+  lv_obj_set_pos(title, 12, 10);
+  eventWhenText(*next, now, today, when, sizeof(when));
   lv_obj_t* whenLabel = createLabel(card, when, &stAccent);
   lv_obj_set_pos(whenLabel, 12, 30);
-
   toScreenText(next->title, titleText, sizeof(titleText));
   lv_obj_t* titleLabel = createLabel(card, titleText, &stBody);
-  makeSingleLine(titleLabel, w - 24, 2);
+  makeSingleLine(titleLabel, w - 24, h >= 96 ? 2 : 1);
   lv_obj_set_pos(titleLabel, 12, 50);
 
-  if (laterToday > 0) {
+  if (laterToday > 0 && h >= 100) {
     char more[24];
     snprintf(more, sizeof(more), "+%d more today", laterToday);
     lv_obj_t* moreLabel = createLabel(card, more, &stSmall);

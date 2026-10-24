@@ -1,7 +1,10 @@
 #ifndef SECRETS_H
 #define SECRETS_H
 // ============================================================
-// Copy this file to secrets.h (same folder) and fill in the values.
+// OPTIONAL. The display's Setup page (Settings > Device > Setup page,
+// or the SmartDisplay-Setup portal) sets all of these without code.
+// For development: copy this file to secrets.h (same folder) and fill
+// in the values; they are used until something is saved on the Setup page.
 // secrets.h is listed in .gitignore - never upload it to GitHub.
 //
 // Firebase values come from the Firebase console (project smart-display-5f14b):

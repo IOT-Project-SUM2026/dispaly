@@ -4,29 +4,22 @@
 #include <NetworkClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include "../time_date/time_date.h"
-
-#if __has_include("../../secrets.h")
-#include "../../secrets.h"
-#endif
+#include "../config/config.h"
+#include "../net/net.h"
+#include "../home/home_layout.h"
 
 // ============================================================
 // Upcoming events from Google Calendar (Google Calendar API).
 //
 // Reads a public Google calendar with an API key, so the display
-// needs no Google login: put CALENDAR_ID and CALENDAR_API_KEY in
-// main/secrets.h (see README). Without them the calendar shows
-// "Calendar not set up" and the rest works as usual.
+// needs no Google login. The calendar ID and key are set on the setup
+// page (config.h; secrets.h gives the starting values). Without them
+// the calendar shows "Calendar not set up" and the rest works as usual.
 // Checks every 10 minutes. No screen code here (calendar_screen.h).
-// Runs in loop(), like the weather request.
+// The download runs in the background (net task), like the weather.
 // ============================================================
-
-#ifndef CALENDAR_ID
-#define CALENDAR_ID ""
-#endif
-#ifndef CALENDAR_API_KEY
-#define CALENDAR_API_KEY ""
-#endif
 
 // Days since 1 Jan 1970 for a calendar date, used to compare dates
 // ("is this event today or tomorrow?")
@@ -59,15 +52,75 @@ struct CalendarEvent {
 
 enum CalendarState { CALENDAR_NOT_SET_UP, CALENDAR_LOADING, CALENDAR_READY, CALENDAR_FAILED };
 
-bool calendarConfigured() {
-  return strlen(CALENDAR_ID) > 0 && strlen(CALENDAR_API_KEY) > 0 &&
-         strncmp(CALENDAR_ID, "PASTE", 5) != 0 && strncmp(CALENDAR_API_KEY, "PASTE", 5) != 0;
-}
-
 CalendarEvent calendarEvents[CALENDAR_MAX_EVENTS];
 int calendarEventCount = 0;
-CalendarState calendarState = calendarConfigured() ? CALENDAR_LOADING : CALENDAR_NOT_SET_UP;
+CalendarState calendarState = CALENDAR_NOT_SET_UP;  // set by initCalendar()
 int calendarError = 0;  // HTTP code of the last failed request (negative = no connection)
+
+// Filled by the background download, copied by handleCalendar() in loop()
+static CalendarEvent calendarDownloaded[CALENDAR_MAX_EVENTS];
+static int calendarDownloadedCount = 0;
+static int calendarDownloadError = 0;
+
+time_t calendarUpdatedAt = 0;  // when the events were last downloaded (0 = unknown)
+#define CALENDAR_STALE_S 3600   // older than 1 hour: "Updated" is shown in red
+
+// ---------- saved in flash, so the events show after a restart without internet ----------
+#define CALENDAR_SAVE_VERSION 1
+struct SavedCalendar {
+  uint8_t version, count;
+  uint32_t updatedAt;
+  CalendarEvent events[CALENDAR_MAX_EVENTS];
+};
+
+// Saves the events when they changed (rare), plus the time of the download
+static void saveCalendar() {
+  static uint32_t savedSum = 0;
+  uint32_t sum = calendarEventCount;  // cheap fingerprint of the events
+  const uint8_t* bytes = (const uint8_t*)calendarEvents;
+  for (size_t i = 0; i < sizeof(CalendarEvent) * calendarEventCount; i++) sum = sum * 31 + bytes[i];
+  if (sum == savedSum) return;  // nothing new: no flash write
+  SavedCalendar* s = (SavedCalendar*)calloc(1, sizeof(SavedCalendar));
+  if (!s) return;
+  s->version = CALENDAR_SAVE_VERSION;
+  s->count = calendarEventCount;
+  s->updatedAt = (uint32_t)calendarUpdatedAt;
+  memcpy(s->events, calendarEvents, sizeof(CalendarEvent) * calendarEventCount);
+  Preferences p;
+  if (p.begin("calendar", false)) {
+    if (p.putBytes("data", s, sizeof(SavedCalendar)) == sizeof(SavedCalendar)) savedSum = sum;
+    p.end();
+  }
+  free(s);
+}
+
+// Call once in setup(), after initConfig()
+void initCalendar() {
+  calendarState = calendarConfigured() ? CALENDAR_LOADING : CALENDAR_NOT_SET_UP;
+  if (calendarState == CALENDAR_NOT_SET_UP) return;
+  Preferences p;
+  if (!p.begin("calendar", true)) return;  // never saved
+  SavedCalendar* s = (SavedCalendar*)calloc(1, sizeof(SavedCalendar));
+  bool ok = s && p.getBytesLength("data") == sizeof(SavedCalendar) &&
+            p.getBytes("data", s, sizeof(SavedCalendar)) == sizeof(SavedCalendar) &&
+            s->version == CALENDAR_SAVE_VERSION && s->count <= CALENDAR_MAX_EVENTS;
+  p.end();
+  if (ok) {
+    memcpy(calendarEvents, s->events, sizeof(CalendarEvent) * s->count);
+    for (int i = 0; i < s->count; i++) calendarEvents[i].title[CALENDAR_TITLE_LEN - 1] = '\0';
+    calendarEventCount = s->count;
+    calendarUpdatedAt = s->updatedAt;
+    calendarState = CALENDAR_READY;  // shown once the clock is set; replaced by the first download
+    Serial.printf("[Calendar] %d saved event%s loaded\n", s->count, s->count == 1 ? "" : "s");
+  }
+  free(s);
+}
+
+// True when the events on screen are older than 1 hour (or their age is unknown)
+bool calendarStale() {
+  if (calendarUpdatedAt == 0 || !timeSynced()) return true;
+  return time(NULL) - calendarUpdatedAt > CALENDAR_STALE_S;
+}
 
 bool calendarCheckNow = false;  // set when the Calendar screen opens: check right away
 
@@ -151,7 +204,7 @@ static bool calendarParseTime(const char* text, long& day, int& hour, int& minut
   return true;
 }
 
-// Fills calendarEvents from Google's reply. Returns false if the reply can't be read.
+// Fills calendarDownloaded from Google's reply. Returns false if the reply can't be read.
 bool calendarParseEvents(const String& payload) {
   JsonDocument doc;
   if (deserializeJson(doc, payload)) return false;
@@ -161,7 +214,7 @@ bool calendarParseEvents(const String& payload) {
   int count = 0;
   for (JsonObject item : items) {
     if (count >= CALENDAR_MAX_EVENTS) break;
-    CalendarEvent& e = calendarEvents[count];
+    CalendarEvent& e = calendarDownloaded[count];
     const char* startText = item["start"]["dateTime"].as<const char*>();  // nullptr for all-day events
     const char* endText = item["end"]["dateTime"].as<const char*>();
     e.allDay = startText == nullptr;
@@ -180,12 +233,12 @@ bool calendarParseEvents(const String& payload) {
     calendarCopyTitle(e.title, item["summary"] | "(No title)", CALENDAR_TITLE_LEN);
     count++;
   }
-  calendarEventCount = count;
+  calendarDownloadedCount = count;
   return true;
 }
 
-// Returns true if the events were updated
-static bool fetchCalendar() {
+// Runs in the background (net task). Returns true if the events were downloaded.
+static bool downloadCalendar() {
   time_t now = time(nullptr);
   struct tm utc;
   gmtime_r(&now, &utc);
@@ -194,18 +247,17 @@ static bool fetchCalendar() {
            utc.tm_mday, utc.tm_hour, utc.tm_min, utc.tm_sec);
 
   // Events that haven't ended yet, soonest first, times in Israel time
-  String url = "https://www.googleapis.com/calendar/v3/calendars/" + calendarUrlEncode(CALENDAR_ID) +
-               "/events?key=" + calendarUrlEncode(CALENDAR_API_KEY) +
+  String url = "https://www.googleapis.com/calendar/v3/calendars/" + calendarUrlEncode(config.calendarId) +
+               "/events?key=" + calendarUrlEncode(config.calendarKey) +
                "&timeMin=" + timeMin + "&maxResults=" + String(CALENDAR_MAX_EVENTS) +
                "&singleEvents=true&orderBy=startTime&timeZone=Asia%2FJerusalem"
                "&fields=items(summary,start,end)";
 
   NetworkClientSecure client;
-  client.setInsecure();           // encrypted, certificate not checked (same as the weather and Firebase requests)
-  client.setHandshakeTimeout(8);  // seconds; the default (120 s) could freeze the screen if WiFi drops
+  setupSecureClient(client, 8);   // handshake limit 8 s (default 120)
   HTTPClient http;
   if (!http.begin(client, url)) {
-    calendarError = -1;
+    calendarDownloadError = -1;
     Serial.println("[Calendar] Could not start the request");
     return false;
   }
@@ -213,9 +265,11 @@ static bool fetchCalendar() {
   int code = http.GET();
   String payload = code > 0 ? http.getString() : String();
   http.end();
+  netReport(code);
+  netLogFailure("Calendar", client, code);
 
   if (code != 200) {
-    calendarError = code;
+    calendarDownloadError = code;
     // Google explains the problem in error.message (e.g. "API key not valid")
     JsonDocument error;
     String reason = HTTPClient::errorToString(code);  // for no connection, timeouts...
@@ -224,13 +278,15 @@ static bool fetchCalendar() {
     return false;
   }
   if (!calendarParseEvents(payload)) {
-    calendarError = 0;
+    calendarDownloadError = 0;
     Serial.println("[Calendar] Could not read the reply");
     return false;
   }
-  Serial.printf("[Calendar] Updated: %d upcoming event%s\n", calendarEventCount, calendarEventCount == 1 ? "" : "s");
+  Serial.printf("[Calendar] Updated: %d upcoming event%s\n", calendarDownloadedCount, calendarDownloadedCount == 1 ? "" : "s");
   return true;
 }
+
+static BgJob calendarJob = {"calendar", downloadCalendar, BG_IDLE, false};
 
 // In loop(). Checks every 10 min (every minute after an error).
 // Returns true when the calendar screen or home card should be redrawn
@@ -250,10 +306,29 @@ bool handleCalendar() {
     }
   }
 
+  bool ok;
+  if (bgTake(calendarJob, ok)) {  // a download finished
+    if (ok) {
+      memcpy(calendarEvents, calendarDownloaded, sizeof(CalendarEvent) * calendarDownloadedCount);
+      calendarEventCount = calendarDownloadedCount;
+      calendarState = CALENDAR_READY;
+      calendarUpdatedAt = time(NULL);
+      saveCalendar();
+      return true;
+    }
+    calendarError = calendarDownloadError;
+    // keep showing the events from the last check (offline mode); only report the error if there are none
+    CalendarState before = calendarState;
+    if (calendarState != CALENDAR_READY) calendarState = CALENDAR_FAILED;
+    return calendarState != before || calendarState == CALENDAR_FAILED || eventChanged;
+  }
+  if (bgBusy(calendarJob)) return eventChanged;
+  if (!homeWidgetShown(HW_NEXT)) return false;  // widget hidden: the feature is off, nothing to download
+
   if (!calendarConfigured()) {
     if (!attempted) {  // say it once
       attempted = true;
-      Serial.println("[Calendar] Not set up: add CALENDAR_ID and CALENDAR_API_KEY to secrets.h");
+      Serial.println("[Calendar] Not set up: add the calendar ID and API key on the setup page (or in secrets.h)");
     }
     return false;
   }
@@ -261,24 +336,14 @@ bool handleCalendar() {
   // the Calendar screen was just opened: check now (but not more than every 15 s)
   bool checkNow = calendarCheckNow && (!attempted || millis() - lastAttempt >= 15000);
   calendarCheckNow = false;
-  if (!checkNow) {
-    if (attempted && millis() - lastAttempt < wait) return eventChanged;
-    // a request blocks the screen for about a second: refreshes wait until it hasn't been touched for 10 s
-    if (calendarState == CALENDAR_READY && lv_display_get_inactive_time(NULL) < 10000) return eventChanged;
-  }
+  if (!checkNow && attempted && millis() - lastAttempt < wait) return eventChanged;
   // needs WiFi, and the time (to ask for events from now on)
   if (WiFi.status() != WL_CONNECTED || !timeSynced()) return eventChanged;
   attempted = true;
   lastAttempt = millis();
 
   if (checkNow) Serial.println("[Calendar] Calendar screen opened: checking for new events");
-  CalendarState before = calendarState;
-  if (fetchCalendar()) {
-    calendarState = CALENDAR_READY;
-    return true;
-  }
-  // keep showing the events from the last check (offline mode); only report the error if there are none
-  if (calendarState != CALENDAR_READY) calendarState = CALENDAR_FAILED;
-  return calendarState != before || eventChanged;
+  bgRequest(calendarJob);
+  return eventChanged;
 }
 #endif

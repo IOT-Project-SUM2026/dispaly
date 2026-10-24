@@ -23,6 +23,7 @@ Screen currentScreen = HOME;
 int requestedScreen = -1;  // set by button callbacks, applied in handleTouch()
 
 #define VOICE_SCREEN_MS 30000     // a list opened by a voice command goes back home after this long untouched
+#define USER_BUSY_MS    10000     // touched this recently on another screen: a voice command only shows its pop-up
 bool returnHomeWhenIdle = false;
 
 #define XPT2046_IRQ 36
@@ -160,10 +161,12 @@ void refreshScreen(DataKind changed = DATA_ALL) {
 // Voice commands: wake up, open the list, show the result
 // ============================================================
 lv_obj_t* toast = NULL;
+lv_timer_t* toastTimer = NULL;  // hides the pop-up; replaced when a new pop-up comes
 
 void onToastTimer(lv_timer_t* t) {
   if (toast) lv_obj_delete(toast);
   toast = NULL;
+  toastTimer = NULL;  // a one-shot timer deletes itself
 }
 
 // Message at the top for 3 s, e.g. "Added milk to your shopping list".
@@ -209,14 +212,24 @@ void showToast(const char* text, bool success) {
   lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) { lv_obj_set_y((lv_obj_t*)obj, v); });
   lv_anim_start(&a);
 
-  lv_timer_t* timer = lv_timer_create(onToastTimer, 3000, NULL);
-  lv_timer_set_repeat_count(timer, 1);
+  // a new pop-up gets its own 3 s: the previous one's timer would hide it early
+  if (toastTimer) lv_timer_delete(toastTimer);
+  toastTimer = lv_timer_create(onToastTimer, 3000, NULL);
+  lv_timer_set_repeat_count(toastTimer, 1);
 }
 
 // Called from loop() when handleFirebase() got a command
 void showVoiceCommand(const VoiceCommand& command) {
   wakeFromIdle();
+  // someone is using another screen (e.g. changing a setting): don't take it
+  // away from them, only show the result at the top
+  bool userBusy = currentScreen != HOME && currentScreen != LISTS &&
+                  lv_display_get_inactive_time(NULL) < USER_BUSY_MS;
   lv_display_trigger_activity(NULL);  // counts as activity: no sleep, 30 s until back home
+  if (userBusy) {
+    showToast(command.text, command.success);
+    return;
+  }
   selectList(command.list, command.onList ? command.item : nullptr);
   if (currentScreen != LISTS) returnHomeWhenIdle = true;
   switchTo(LISTS);
@@ -228,6 +241,9 @@ void showVoiceCommand(const VoiceCommand& command) {
 // ============================================================
 void handleTouch() {
   lv_timer_handler();
+  updateDeviceRows();  // Settings > Device values (every 2 s while shown)
+
+  if (takeConfigSavedMessage()) showToast("Settings saved. Restarting...", true);  // wifi_setup.h
 
   if (requestedScreen >= 0) {
     Screen next = (Screen)requestedScreen;

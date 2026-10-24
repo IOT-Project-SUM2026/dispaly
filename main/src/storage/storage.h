@@ -17,7 +17,10 @@ int loadInt(const char* key, int defaultValue) {
 }
 
 void saveInt(const char* key, int value) {
-  prefs.putInt(key, value);
+  if (prefs.putInt(key, value) == 0) {  // flash full or broken: the setting still works until restart
+    Serial.printf("[Storage] Could not save %s\n", key);
+    return;
+  }
   Serial.printf("[Storage] %s = %d\n", key, value);
 }
 #endif

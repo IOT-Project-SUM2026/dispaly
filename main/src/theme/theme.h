@@ -56,6 +56,8 @@ const Theme* theme = &DARK_THEME;
 // (a full 40 px font would be ~70 KB). See font_display.c.
 // Equal-width digits so the clock doesn't shift when a minute changes.
 LV_FONT_DECLARE(font_display);
+LV_FONT_DECLARE(font_display_big);  // 76 px digits: big clock on Home
+LV_FONT_DECLARE(font_display_mid);  // 56 px digits: Home clock in a half-width box
 // Hebrew letters + Montserrat for the rest (font_hebrew_*.c), for text
 // people write: list items, event titles, voice command replies.
 LV_FONT_DECLARE(font_hebrew_14);
@@ -83,6 +85,8 @@ lv_style_t stNowBar;       // accent bar on the left of an event that is on now
 
 // text styles: font + color
 lv_style_t stDisplay;      // big digits (clock, temperature)
+lv_style_t stDisplayBig;   // 76 px digits (big clock widget)
+lv_style_t stDisplayMid;   // 50 px digits (clock in a half-width box)
 lv_style_t stValue;        // 28 px
 lv_style_t stTitle;        // 20 px (screen titles, list items, event titles)
 lv_style_t stTitleAccent;  // 20 px accent
@@ -141,6 +145,8 @@ static void setStyleColors() {
   lv_style_set_border_color(&stNowBar, accent);
 
   lv_style_set_text_color(&stDisplay, text);
+  lv_style_set_text_color(&stDisplayBig, text);
+  lv_style_set_text_color(&stDisplayMid, text);
   lv_style_set_text_color(&stValue, text);
   lv_style_set_text_color(&stTitle, text);
   lv_style_set_text_color(&stTitleAccent, accent);
@@ -248,6 +254,8 @@ void initStyles() {
   lv_style_set_border_side(&stNowBar, LV_BORDER_SIDE_LEFT);
 
   textStyle(&stDisplay, &font_display);
+  textStyle(&stDisplayBig, &font_display_big);
+  textStyle(&stDisplayMid, &font_display_mid);
   textStyle(&stValue, &lv_font_montserrat_28);
   textStyle(&stTitle, &font_hebrew_20);
   textStyle(&stTitleAccent, &font_hebrew_20);
