@@ -22,7 +22,7 @@ IoT project course 236333, Technion Faculty of Computer Science, group 5א:
 | Repository | Contents |
 |---|---|
 | **dispaly** (this one) | ESP32 firmware, unit tests, documentation, diagrams |
-| **Smart Display app** (https://iot-smart-display.netlify.app/) | phone web app (PWA) + Node.js backend that sends the voice recording to Gemini and writes the command to Firebase. Libraries and versions: its `package.json` |
+| **Smart Display app** (https://iot-project-sum2026-production.up.railway.app) | phone web app (PWA) + Node.js backend that sends the voice recording to Gemini and writes the command to Firebase. Libraries and versions: its `package.json` |
 
 The final version of each repository is on its `main` (master) branch.
 
